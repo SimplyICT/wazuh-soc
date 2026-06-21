@@ -4,6 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { apiGet } from '../api/wazuhApi';
 import KpiCard from '../components/KpiCard';
 import SeverityBadge from '../components/SeverityBadge';
+import CaseStatusBadge from '../components/CaseStatusBadge';
 import FilterTabs from '../components/FilterTabs';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,11 +17,6 @@ function timeAgo(d) {
   if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
   if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
   return Math.floor(sec / 86400) + 'd ago';
-}
-
-function caseStatusBadge(s) {
-  const m = { open: 'badge-gray', triaged: 'badge-accent', awaiting_approval: 'badge-amber', approved: 'badge-green', resolved: 'badge-green', closed: 'badge-gray', rejected: 'badge-red', partial: 'badge-amber' };
-  return `<span class="badge ${m[s] || 'badge-gray'}">${s}</span>`;
 }
 
 export default function Autopilot() {
@@ -44,7 +40,7 @@ export default function Autopilot() {
     { key: 'id', label: 'ID', render: r => `#${r.id}` },
     { key: 'title', label: 'Title', render: r => (r.title || '').substring(0, 50) },
     { key: 'severity', label: 'Severity', render: r => <SeverityBadge severity={r.severity} /> },
-    { key: 'status', label: 'Status', render: r => <span dangerouslySetInnerHTML={{ __html: caseStatusBadge(r.status) }} /> },
+    { key: 'status', label: 'Status', render: r => <CaseStatusBadge status={r.status} /> },
     { key: 'alert_count', label: 'Alerts' },
     { key: 'mitre', label: 'MITRE', render: r => r.mitre?.technique_id ? <span className="badge badge-accent">{r.mitre.technique_id}</span> : '-' },
     { key: 'updated_at', label: 'Updated', render: r => timeAgo(r.updated_at) },

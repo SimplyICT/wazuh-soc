@@ -2,14 +2,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { apiGet, apiPost } from '../api/wazuhApi';
 import SeverityBadge from '../components/SeverityBadge';
+import CaseStatusBadge from '../components/CaseStatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
 import { useToast } from '../context/ToastContext';
-
-function caseStatusBadge(s) {
-  const m = { open: 'badge-gray', triaged: 'badge-accent', awaiting_approval: 'badge-amber', approved: 'badge-green', resolved: 'badge-green', closed: 'badge-gray', rejected: 'badge-red', partial: 'badge-amber' };
-  return `<span class="badge ${m[s] || 'badge-gray'}">${s}</span>`;
-}
 
 function formatDate(d) {
   if (!d) return '-';
@@ -55,7 +51,7 @@ export default function AutopilotCase() {
           <div className="detail-name">Case #{c.id}</div>
           <div className="detail-meta">
             <SeverityBadge severity={c.severity} />
-            <span dangerouslySetInnerHTML={{ __html: caseStatusBadge(c.status) }} />
+            <CaseStatusBadge status={c.status} />
             <span>{c.alert_count || 0} alerts</span>
             <span>Created: {formatDate(c.created_at)}</span>
             {c.confidence && <span>Confidence: {Math.round(c.confidence * 100)}%</span>}

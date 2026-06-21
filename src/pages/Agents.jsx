@@ -24,6 +24,27 @@ const FILTER_TABS = [
 ];
 
 const COLUMNS = ['ID', 'Name', 'IP', 'OS', 'Status', 'Version', 'Last Seen'];
+const ROW_HEIGHT = 42;
+
+function renderRow(items, navigate) {
+  return function Row({ index, style }) {
+    const a = items[index];
+    if (!a) return null;
+    const os = a.os ? (a.os.name || '') + ' ' + (a.os.version || '') : 'Unknown';
+    return (
+      <div style={{ ...style, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+           className="list-row" onClick={() => navigate(`/agent/${a.id}`)}>
+        <div style={{ flex: '0 0 60px', padding: '0 8px' }}>{a.id}</div>
+        <div style={{ flex: '1 1 150px', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+        <div style={{ flex: '0 0 120px', padding: '0 8px' }}>{a.ip}</div>
+        <div style={{ flex: '1 1 180px', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{os.substring(0, 30)}</div>
+        <div style={{ flex: '0 0 100px', padding: '0 8px' }}><StatusBadge status={a.status} /></div>
+        <div style={{ flex: '0 0 100px', padding: '0 8px' }}>{a.version || '-'}</div>
+        <div style={{ flex: '0 0 100px', padding: '0 8px' }}>{timeAgo(a.lastKeepAlive)}</div>
+      </div>
+    );
+  };
+}
 
 export default function Agents() {
   const r = useApi(() => apiGet('/agents?limit=500'), []);
@@ -38,38 +59,25 @@ export default function Agents() {
   if (r.loading) return <LoadingSpinner />;
   if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
-  const Row = ({ index, style }) => {
-    const a = items[index];
-    if (!a) return null;
-    const os = a.os ? (a.os.name || '') + ' ' + (a.os.version || '') : 'Unknown';
-    return (
-      <tr style={style} className="clickable" onClick={() => navigate(`/agent/${a.id}`)}>
-        <td>{a.id}</td>
-        <td>{a.name}</td>
-        <td>{a.ip}</td>
-        <td>{os.substring(0, 30)}</td>
-        <td><StatusBadge status={a.status} /></td>
-        <td>{a.version || '-'}</td>
-        <td>{timeAgo(a.lastKeepAlive)}</td>
-      </tr>
-    );
-  };
+  const listHeight = Math.min(items.length * ROW_HEIGHT, 600);
 
   return (
     <>
       <FilterTabs tabs={FILTER_TABS} onChange={setFilter} />
       <div className="card">
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>{COLUMNS.map(c => <th key={c}>{c}</th>)}</tr>
-            </thead>
-            <tbody style={{ height: Math.min(items.length * 42, 600), display: 'block', overflowY: 'auto' }}>
-              <List height={Math.min(items.length * 42, 600)} itemCount={items.length} itemSize={42} width="100%">
-                {Row}
-              </List>
-            </tbody>
-          </table>
+        <div className="table-container" style={{ padding: 0 }}>
+          <div style={{ display: 'flex', padding: '10px 0', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--text-secondary)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ flex: '0 0 60px', padding: '0 8px' }}>ID</div>
+            <div style={{ flex: '1 1 150px', padding: '0 8px' }}>Name</div>
+            <div style={{ flex: '0 0 120px', padding: '0 8px' }}>IP</div>
+            <div style={{ flex: '1 1 180px', padding: '0 8px' }}>OS</div>
+            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Status</div>
+            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Version</div>
+            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Last Seen</div>
+          </div>
+          <List height={listHeight} itemCount={items.length} itemSize={ROW_HEIGHT} width="100%">
+            {renderRow(items, navigate)}
+          </List>
         </div>
       </div>
     </>

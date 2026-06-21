@@ -10,6 +10,11 @@ export default defineConfig({
         target: 'http://localhost:8095',
         changeOrigin: true,
       },
+      '/remediation-api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/remediation-api/, '/api/v1'),
+      },
     },
   },
 });

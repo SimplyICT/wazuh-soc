@@ -1,33 +1,22 @@
 import { useParams } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useApi } from '../hooks/useApi';
+import { apiGet } from '../api/wazuhApi';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorState from '../components/ErrorState';
 
 export default function AlertDetail() {
   const { id } = useParams();
-  const [alert, setAlert] = useState(null);
-  const [remediation, setRemediation] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const alertR = useApi(() => apiGet('/events?size=1'), [id]);
+  const remediationR = useApi(() =>
+    fetch(`/remediation-api/remediation/suggest/${id}`).then(r => r.json()),
+  [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      fetch('/wazuh-api/events?size=1').then(r => r.json()).then(d => d.data || d).catch(() => null),
-      fetch('http://127.0.0.1:8000/api/v1/remediation/suggest/' + id, {
-        headers: { 'x-api-key': 'mission-test-key-123' },
-      }).then(r => r.json()).catch(() => null),
-    ]).then(([ev, rem]) => {
-      const items = ev?.affected_items || [];
-      setAlert(items[0] || {});
-      setRemediation(rem);
-    }).catch(e => setError(e.message))
-    .finally(() => setLoading(false));
-  }, [id]);
+  if (alertR.loading || remediationR.loading) return <LoadingSpinner />;
+  if (alertR.error) return <ErrorState message={alertR.error.message} onRetry={alertR.refetch} />;
 
-  if (loading) return <div className="loading"><div className="loading-spinner"></div><div style={{ marginTop: 12 }}>Loading...</div></div>;
-  if (error) return <div className="error-state">{error}<br /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>;
-
-  const a = alert || {};
+  const items = alertR.data?.affected_items || [];
+  const a = items[0] || {};
+  const remediation = remediationR.data;
   const ruleLevel = a.rule?.level || 0;
   const sev = ruleLevel >= 12 ? 'critical' : ruleLevel >= 8 ? 'high' : ruleLevel >= 5 ? 'medium' : 'low';
   const sevMap = { critical: 'severity-critical', high: 'severity-high', medium: 'severity-medium', low: 'severity-low' };

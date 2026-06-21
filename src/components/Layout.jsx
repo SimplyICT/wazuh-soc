@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import NLPanel from './NLPanel';
+import { useRefresh } from './RefreshContext';
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const [nlOpen, setNlOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const navigate = useNavigate();
+  const { refresh } = useRefresh();
 
   const handleRefresh = () => {
-    navigate(0);
+    refresh();
     setLastUpdated(new Date().toLocaleTimeString());
   };
 

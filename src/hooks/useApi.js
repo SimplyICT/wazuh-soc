@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-export function useApi(fetchFn, deps = []) {
+export function useApi(fetchFn, deps = [], refreshKey) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -14,7 +14,7 @@ export function useApi(fetchFn, deps = []) {
       .finally(() => setLoading(false));
   }, deps);
 
-  useEffect(() => { execute(); }, [execute]);
+  useEffect(() => { execute(); }, [execute, refreshKey]);
 
   return { data, loading, error, refetch: execute };
 }

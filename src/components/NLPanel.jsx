@@ -1,4 +1,51 @@
 import { useState, useRef, useEffect } from 'react';
+import { useRefresh } from './RefreshContext';
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function BotMessage({ text, results }) {
+  if (!results) return <span>{text}</span>;
+  if (results.type === 'overview') {
+    return (
+      <span>
+        {text}
+        <br /><br />
+        <span style={{ color: 'var(--accent)' }}>&#128268; {results.devices_total} devices</span>
+        {' '}&middot;{' '}
+        <span style={{ color: 'var(--green)' }}>{results.devices_online} online</span>
+        {' '}&middot;{' '}
+        <span style={{ color: 'var(--red)' }}>{results.devices_offline} offline</span>
+        {' '}&middot;{' '}
+        <span style={{ color: 'var(--amber)' }}>{results.alerts_open} alerts</span>
+      </span>
+    );
+  }
+  if ((results.type === 'offline_devices' || results.type === 'critical_alerts') && results.items) {
+    return (
+      <span>
+        {results.items.map((i, idx) => (
+          <span key={idx}><br />&#128308; [{i.severity}] {escHtml(i.title)}{results.type === 'critical_alerts' ? <span style={{ color: 'var(--text-secondary)' }}> {escHtml(i.site)}</span> : null}</span>
+        ))}
+      </span>
+    );
+  }
+  if (results.type === 'device_detail') {
+    return (
+      <span>
+        <b>{escHtml(results.ip)}</b><br />
+        Name: {escHtml(results.friendly_name || results.hostname || '-')}<br />
+        Type: {escHtml(results.device_type)}<br />
+        Vendor: {escHtml(results.vendor)}<br />
+        Status: {escHtml(results.status)}
+      </span>
+    );
+  }
+  return <span>{text}</span>;
+}
 
 export default function NLPanel({ open, onClose }) {
   const [messages, setMessages] = useState([
@@ -25,20 +72,8 @@ export default function NLPanel({ open, onClose }) {
         body: JSON.stringify({ query: q }),
       });
       const d = await res.json();
-      let txt = d.message || 'No response.';
-      const r = d.results;
-      if (r) {
-        if (r.type === 'overview') {
-          txt += `<br><br><span style="color:var(--accent)">&#128268; ${r.devices_total} devices</span> &middot; <span style="color:var(--green)">${r.devices_online} online</span> &middot; <span style="color:var(--red)">${r.devices_offline} offline</span> &middot; <span style="color:var(--amber)">${r.alerts_open} alerts</span>`;
-        } else if (r.type === 'offline_devices' && r.items) {
-          txt += r.items.map(i => `<br>&#128308; [${i.severity}] ${escHtml(i.title)}`).join('');
-        } else if (r.type === 'critical_alerts' && r.items) {
-          txt += r.items.map(i => `<br>&#128308; [${i.severity}] ${escHtml(i.title)} <span style="color:var(--text-secondary)">${escHtml(i.site)}</span>`).join('');
-        } else if (r.type === 'device_detail') {
-          txt = `<b>${escHtml(r.ip)}</b><br>Name: ${escHtml(r.friendly_name || r.hostname || '-')}<br>Type: ${escHtml(r.device_type)}<br>Vendor: ${escHtml(r.vendor)}<br>Status: ${escHtml(r.status)}`;
-        }
-      }
-      setMessages(prev => [...prev.slice(0, -1), { role: 'bot', text: txt, html: true }]);
+      const txt = d.message || 'No response.';
+      setMessages(prev => [...prev.slice(0, -1), { role: 'bot', text: txt, results: d.results }]);
     } catch (e) {
       setMessages(prev => [...prev.slice(0, -1), { role: 'bot', text: `Error: ${e.message}` }]);
     } finally {
@@ -54,9 +89,10 @@ export default function NLPanel({ open, onClose }) {
       </div>
       <div className="nl-messages" ref={msgsRef}>
         {messages.map((m, i) => (
-          <div key={i} className={`nl-msg nl-${m.role}`}
-              dangerouslySetInnerHTML={m.html ? { __html: m.text } : undefined}>
-            {!m.html && m.text}
+          <div key={i} className={`nl-msg nl-${m.role}`}>
+            {m.role === 'bot' && (m.results || m.text !== 'Thinking...')
+              ? <BotMessage text={m.text} results={m.results} />
+              : m.text}
           </div>
         ))}
       </div>
@@ -68,10 +104,4 @@ export default function NLPanel({ open, onClose }) {
       </div>
     </div>
   );
-}
-
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
 }
