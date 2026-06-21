@@ -491,6 +491,11 @@ tr.clickable { cursor: pointer; }
 .mitre-cell { padding: 8px; border-radius: var(--radius-sm); text-align: center; cursor: pointer; font-size: 11px; }
 .mitre-cell:hover { opacity: 0.8; }
 
+/* ── Text Colors ── */
+.text-green { color: var(--green); }
+.text-amber { color: var(--amber); }
+.text-red { color: var(--red); }
+
 /* ── Misc ── */
 .group-badge {
   display: inline-flex;
