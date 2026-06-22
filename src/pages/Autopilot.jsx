@@ -24,17 +24,24 @@ export default function Autopilot() {
   const [filter, setFilter] = useState('all');
   const navigate = useNavigate();
 
+  const cases = r.data ? (r.data[0]?.affected_items || []) : [];
+  const filtered = useMemo(() => {
+    if (!r.data) return [];
+    if (filter === 'all') return cases;
+    return cases.filter(c => c.status === filter);
+  }, [cases, filter, r.data]);
+
   if (r.loading) return <LoadingSpinner />;
   if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
-  const [casesRes, stats] = r.data;
-  const cases = casesRes.affected_items || [];
+  const stats = r.data[1];
   const pending = cases.filter(c => c.status === 'awaiting_approval').length;
 
-  const filtered = useMemo(() => {
-    if (filter === 'all') return cases;
-    return cases.filter(c => c.status === filter);
-  }, [cases, filter]);
+  function ConfPct({ confidence }) {
+    const pct = Math.round((confidence || 0) * 100);
+    const color = pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red';
+    return <span className={`badge badge-${color}`}>{pct}%</span>;
+  }
 
   const columns = [
     { key: 'id', label: 'ID', render: r => `#${r.id}` },
@@ -42,7 +49,11 @@ export default function Autopilot() {
     { key: 'severity', label: 'Severity', render: r => <SeverityBadge severity={r.severity} /> },
     { key: 'status', label: 'Status', render: r => <CaseStatusBadge status={r.status} /> },
     { key: 'alert_count', label: 'Alerts' },
-    { key: 'mitre', label: 'MITRE', render: r => r.mitre?.technique_id ? <span className="badge badge-accent">{r.mitre.technique_id}</span> : '-' },
+    { key: 'confidence', label: 'AI', render: r => <ConfPct confidence={r.confidence} /> },
+    { key: 'mitre', label: 'MITRE', render: r => {
+      const tid = r.mitre_technique || r.mitre?.technique_id;
+      return tid ? <span className="badge badge-accent">{tid}</span> : '-';
+    }},
     { key: 'updated_at', label: 'Updated', render: r => timeAgo(r.updated_at) },
   ];
 

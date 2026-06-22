@@ -22,17 +22,20 @@ const barOptions = {
 
 export default function Dashboard() {
   const r = useApi(() => Promise.all([apiGet('/overview'), apiGet('/events/stats')]), []);
+  const totalVuln = useMemo(() => {
+    if (!r.data) return 0;
+    const [d] = r.data;
+    let t = 0;
+    if (d.vulnerabilities) for (const k in d.vulnerabilities) t += (d.vulnerabilities[k] || 0);
+    return t;
+  }, [r.data]);
+
   if (r.loading) return <LoadingSpinner />;
   if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
   const [d, ev] = r.data;
   const sev = ev.severity || {};
   const totalAlerts = (sev.Critical || 0) + (sev.High || 0) + (sev.Medium || 0) + (sev.Low || 0);
-  const totalVuln = useMemo(() => {
-    let t = 0;
-    if (d.vulnerabilities) for (const k in d.vulnerabilities) t += (d.vulnerabilities[k] || 0);
-    return t;
-  }, [d]);
   const threatScore = sev.Critical ? Math.min(100, Math.round((sev.Critical / Math.max(1, totalAlerts)) * 100)) : 0;
 
   const statusData = { labels: ['Active', 'Offline', 'Never Connected'], datasets: [{ data: [d.active, d.offline, d.never_connected || 0], backgroundColor: ['#00ff88', '#ff4757', '#8fa6b5'], borderWidth: 0 }] };

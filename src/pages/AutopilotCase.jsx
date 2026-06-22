@@ -44,6 +44,19 @@ export default function AutopilotCase() {
       .catch(e => toast(`Failed: ${e.message}`, 'error'));
   };
 
+  function ConfidenceBadge({ confidence }) {
+    const pct = Math.round((confidence || 0) * 100);
+    const color = pct >= 90 ? 'green' : pct >= 70 ? 'amber' : 'red';
+    return <span className={`badge badge-${color}`}>{pct}% confidence</span>;
+  }
+
+  const responsePlan = c.response_plan;
+  const planActions = Array.isArray(responsePlan)
+    ? responsePlan.map((a, i) => ({ type: typeof a === 'string' ? a : a.type, target: typeof a === 'string' ? '-' : a.target || '-', rationale: typeof a === 'string' ? a : a.rationale || '' }))
+    : responsePlan?.actions || [];
+
+  const alertCount = c.alert_ids?.length || c.alert_count || 0;
+
   return (
     <>
       <div className="detail-header">
@@ -52,9 +65,10 @@ export default function AutopilotCase() {
           <div className="detail-meta">
             <SeverityBadge severity={c.severity} />
             <CaseStatusBadge status={c.status} />
-            <span>{c.alert_count || 0} alerts</span>
+            <span>{alertCount} alerts</span>
             <span>Created: {formatDate(c.created_at)}</span>
-            {c.confidence && <span>Confidence: {Math.round(c.confidence * 100)}%</span>}
+            {c.confidence && <ConfidenceBadge confidence={c.confidence} />}
+            {c.mitre_technique && <span className="badge badge-accent">{c.mitre_technique}</span>}
             {c.mitre?.technique_id && <span className="badge badge-accent">{c.mitre.technique_id} {c.mitre.technique || ''}</span>}
           </div>
         </div>
@@ -65,37 +79,40 @@ export default function AutopilotCase() {
         </div>
       </div>
 
+      {c.ai_analysis && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <div className="card-title">AI Analysis</div>
+            <ConfidenceBadge confidence={c.confidence} />
+          </div>
+          <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, fontSize: 13 }}>{c.ai_analysis}</p>
+          {c.mitre_technique && (
+            <div style={{ marginTop: 8 }}>
+              <span className="badge badge-accent">MITRE: {c.mitre_technique}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="cols-2">
         <div className="card">
           <div className="card-header"><div className="card-title">Description</div></div>
-          <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, fontSize: 13 }}>{c.description || 'No description'}</p>
+          <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, fontSize: 13 }}>{c.description || c.ai_analysis || 'No description'}</p>
         </div>
         <div className="card">
           <div className="card-header"><div className="card-title">Entities ({(c.entities || []).length})</div></div>
           {c.entities?.length ? (
             <table><tbody>{c.entities.map((e, i) => (
-              <tr key={i}><td>{e.type}</td><td>{e.value}</td><td><span className="badge badge-gray">{e.role || ''}</span></td></tr>
+              <tr key={i}><td>{e.type || e.source || '-'}</td><td>{e.value || e.source || '-'}</td><td><span className="badge badge-gray">{e.role || ''}</span></td></tr>
             ))}</tbody></table>
           ) : <div className="empty-state">No entities</div>}
         </div>
-        {c.response_plan && (
+        {planActions.length > 0 && (
           <div className="card col-span-2">
             <div className="card-header"><div className="card-title">Response Plan</div></div>
-            <p style={{ marginBottom: 12 }}><strong>Risk:</strong> <SeverityBadge severity={c.response_plan.risk_level || c.severity} /></p>
-            <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>{c.response_plan.summary || ''}</p>
             <table><thead><tr><th>Action</th><th>Target</th><th>Rationale</th></tr></thead>
-              <tbody>{(c.response_plan.actions || []).map((a, i) => (
+              <tbody>{planActions.map((a, i) => (
                 <tr key={i}><td><span className="badge badge-accent">{a.type}</span></td><td>{a.target || '-'}</td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{(a.rationale || '').substring(0, 100)}</td></tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
-        {c.actions?.length > 0 && (
-          <div className="card col-span-2">
-            <div className="card-header"><div className="card-title">Executed Actions</div></div>
-            <table><thead><tr><th>Action</th><th>Target</th><th>Status</th><th>Detail</th></tr></thead>
-              <tbody>{c.actions.map((a, i) => (
-                <tr key={i}><td>{a.action}</td><td>{a.target || '-'}</td><td>{a.status === 'failed' ? <span className="badge badge-red">Failed</span> : a.status === 'requested' ? <span className="badge badge-amber">Requested</span> : <span className="badge badge-green">Done</span>}</td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{(a.detail || '').substring(0, 80)}</td></tr>
               ))}</tbody>
             </table>
           </div>
