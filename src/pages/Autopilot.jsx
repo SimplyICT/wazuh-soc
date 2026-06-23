@@ -20,11 +20,13 @@ function timeAgo(d) {
 }
 
 export default function Autopilot() {
-  const r = useApi(() => Promise.all([apiGet('/autopilot/cases'), apiGet('/autopilot/stats')]), []);
+  const r = useApi(() => Promise.all([apiGet('/autopilot/cases'), apiGet('/autopilot/stats'), apiGet('/autopilot/trends')]), []);
   const [filter, setFilter] = useState('all');
   const navigate = useNavigate();
 
   const cases = r.data ? (r.data[0]?.affected_items || []) : [];
+  const trends = r.data ? r.data[2]?.days || [] : [];
+  const maxTrend = Math.max(...trends.map(d => d.total), 1);
   const filtered = useMemo(() => {
     if (!r.data) return [];
     if (filter === 'all') return cases;
@@ -67,6 +69,20 @@ export default function Autopilot() {
         <KpiCard value={stats.resolved || 0} label="Resolved" color="green" />
         <KpiCard value={stats.avg_triage_time ? `${Math.round(stats.avg_triage_time)}s` : '-'} label="Avg Triage" color="secondary" />
       </div>
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">14-Day Trend</div>
+        </div>
+        <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: 80, padding: '4px 0' }}>
+          {trends.map(d => (
+            <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+              <div style={{ width: '100%', background: 'var(--accent)', opacity: 0.7, borderRadius: '3px 3px 0 0', height: `${(d.total / maxTrend) * 100}%`, minHeight: d.total ? 4 : 0, transition: 'height 0.3s' }} title={`${d.date}: ${d.total} cases`} />
+              <span style={{ fontSize: 9, color: 'var(--text-secondary)', marginTop: 4, transform: 'rotate(-45deg)', whiteSpace: 'nowrap' }}>{d.date.slice(5)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="card">
         <div className="card-header">
           <div className="card-title">Active Cases ({cases.length})</div>
