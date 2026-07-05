@@ -21,7 +21,19 @@ export default function AutopilotCase() {
   if (r.loading) return <LoadingSpinner />;
   if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
+  const safe = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
+    return [];
+  };
+
   const c = r.data;
+  c.events = safe(c.events);
+  c.entities = safe(c.entities);
+  c.actions = safe(c.actions);
+  if (typeof c.response_plan === 'string') try { c.response_plan = JSON.parse(c.response_plan); } catch { c.response_plan = []; }
+  if (typeof c.alert_ids === 'string') try { c.alert_ids = JSON.parse(c.alert_ids); } catch { c.alert_ids = []; }
+
   const isPending = c.status === 'awaiting_approval';
   const isApproved = c.status === 'approved';
 
