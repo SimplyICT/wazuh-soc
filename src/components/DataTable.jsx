@@ -16,10 +16,17 @@ export default function DataTable({ columns, data, onRowClick }) {
   const sorted = sortKey
     ? [...data].sort((a, b) => {
         const va = a[sortKey], vb = b[sortKey];
-        if (va == null) return 1;
-        if (vb == null) return -1;
-        const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
-        return sortDir === 'asc' ? cmp : -cmp;
+        if (va === null || va === undefined || va === '') return 1;
+        if (vb === null || vb === undefined || vb === '') return -1;
+        // Safe compare: coerce everything to string or number explicitly
+        const na = Number(va);
+        const nb = Number(vb);
+        if (!isNaN(na) && !isNaN(nb)) {
+          return sortDir === 'asc' ? na - nb : nb - na;
+        }
+        const sa = String(va);
+        const sb = String(vb);
+        return sortDir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
       })
     : data;
 

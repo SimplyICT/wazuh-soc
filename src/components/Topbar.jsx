@@ -1,8 +1,11 @@
 import { useLocation } from 'react-router-dom';
 
 const PAGE_TITLES = {
-  '/': 'Command Center',
+  '/': 'SOC Command Center',
+  '/playbooks': 'Automation Playbooks',
+  '/queue': 'SOC Queue',
   '/agents': 'Agents',
+  '/our-agents': 'Agents',
   '/sca': 'SCA Compliance',
   '/fim': 'File Integrity Monitoring',
   '/vulnerabilities': 'Vulnerabilities',
@@ -11,8 +14,18 @@ const PAGE_TITLES = {
   '/events': 'Events & Alerts',
   '/topology': 'Topology',
   '/threats': 'Threat Intelligence',
+  '/itdr': 'Identity Threat Detection (ITDR)',
   '/autopilot': 'SOC Autopilot',
+  '/siem': 'SIEM Log Ingestion',
+  '/edr': 'EDR & Response',
   '/manager': 'Manager Health',
+  '/reports': 'SOC Reports',
+  '/compliance': 'Compliance',
+  '/settings': 'Settings & Integrations',
+  '/organizations': 'Organizations',
+  '/users': 'Users & Roles',
+  '/webhooks': 'Webhooks',
+  '/onboarding': 'Onboarding Wizard',
   '/groups': 'Groups',
   '/help': 'Help',
 };
@@ -20,7 +33,7 @@ const PAGE_TITLES = {
 export default function Topbar({ onRefresh, lastUpdated }) {
   const location = useLocation();
   const path = location.pathname;
-  const title = PAGE_TITLES[path] || 'Wazuh SOC';
+  const title = PAGE_TITLES[path] || 'SOC';
 
   return (
     <div className="topbar">

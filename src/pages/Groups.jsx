@@ -1,5 +1,5 @@
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
+import { apiGet } from '../api/api';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';

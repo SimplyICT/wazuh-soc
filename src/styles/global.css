@@ -454,6 +454,9 @@ tr.clickable { cursor: pointer; }
 .nl-bot { background: var(--bg); color: var(--text); align-self: flex-start; border: 1px solid var(--border); }
 .nl-user { background: rgba(0, 180, 216, 0.12); color: var(--accent); align-self: flex-end; border: 1px solid rgba(0, 180, 216, 0.25); }
 
+@keyframes blink {
+  50% { opacity: 0; }
+}
 .nl-input-row {
   display: flex;
   gap: 6px;
@@ -473,6 +476,14 @@ tr.clickable { cursor: pointer; }
 }
 
 .nl-input-row input:focus { border-color: var(--accent); }
+
+/* ── Streaming cursor ── */
+.streaming-cursor::after {
+  content: '\u258C';
+  animation: blink 0.8s step-end infinite;
+  margin-left: 2px;
+  color: var(--cyan);
+}
 
 .nl-toggle {
   cursor: pointer;
@@ -532,3 +543,66 @@ tr.clickable { cursor: pointer; }
   .topbar { flex-direction: column; align-items: stretch; gap: 8px; }
   .topbar-right { justify-content: flex-start; }
 }
+
+/* ── Form Elements ── */
+.input { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: var(--radius-sm); font-size: 13px; outline: none; }
+.input:focus { border-color: var(--accent); }
+.input-sm { padding: 4px 10px; font-size: 12px; }
+.input-flex { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; outline: none; }
+.select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 6px; font-size: 13px; outline: none; }
+.select-sm { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 12px; outline: none; }
+.label { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 2px; }
+
+/* ── Text Utilities ── */
+.text-xs { font-size: 10px; }
+.text-sm { font-size: 11px; }
+.text-base { font-size: 12px; }
+.text-md { font-size: 13px; }
+.text-mono { font-family: monospace; }
+.text-nowrap { white-space: nowrap; }
+.text-secondary { color: var(--text-secondary); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px; }
+.truncate-sm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
+.text-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── Flex Utilities ── */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.gap-4 { gap: 4px; }
+.gap-6 { gap: 6px; }
+.gap-8 { gap: 8px; }
+.gap-10 { gap: 10px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-1 { flex: 1; }
+.flex-shrink-0 { flex-shrink: 0; }
+.align-end { align-items: flex-end; }
+
+/* ── Table Utilities ── */
+.th-sticky { position: sticky; top: 0; background: var(--card-bg); }
+.tr-disabled { opacity: 0.5; }
+.tr-clickable { cursor: pointer; }
+
+/* ── Badge Size ── */
+.badge-xs { font-size: 10px; }
+.badge-click { cursor: pointer; font-size: 10px; }
+
+
+/* ── Severity Badge ── */
+.severity-badge { color: #fff; font-size: 10px; padding: 1px 6px; }
+
+/* ── Detail Section ── */
+.detail-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+/* ── Button Extra Small ── */
+.btn-xs { font-size: 10px; padding: 1px 6px; }
+
+/* ── Overflow ── */
+.overflow-auto { overflow: auto; }
+
+/* ── Card Margin ── */
+.card-mt { margin-top: 16px; }
+.card-mb { margin-bottom: 16px; }
+.card-border-left-red { border-left: 3px solid var(--red); }
+
+/* ── Code Block ── */
+.code-block { background: var(--bg); padding: 14px; border-radius: 8px; font-size: 11px; margin-top: 8px; white-space: pre-wrap; overflow: auto; }

@@ -136,7 +136,7 @@ CREATE TABLE soc_audit_log (
 - Replace `_generate_autopilot_case()` with AI version
 - Remove JSON file reads/writes, use Supabase
 - Add `/api/soc/digest` endpoint for manual digest trigger
-- Update `/wazuh-api/autopilot/*` endpoints to read from Supabase
+- Update `/api/autopilot/*` endpoints to read from Supabase
 
 **`soc_agent.py`** changes:
 - Triage cycle now calls AI triage instead of rule-based scan

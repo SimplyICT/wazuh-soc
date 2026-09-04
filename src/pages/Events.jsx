@@ -1,89 +1,151 @@
-import { useState, useMemo } from 'react';
+import { useState, useRef } from 'react';
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
+import { useRefresh } from '../components/RefreshContext';
 import KpiCard from '../components/KpiCard';
-import SeverityBadge from '../components/SeverityBadge';
-import FilterTabs from '../components/FilterTabs';
-import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
-import { useRefresh } from '../components/RefreshContext';
+
+const SEVERITY_COLORS = {
+  critical: { bg: 'rgba(255,71,87,0.15)', color: '#ff4757', badge: 'badge-red' },
+  high: { bg: 'rgba(255,149,0,0.15)', color: '#ff9500', badge: 'badge-amber' },
+  medium: { bg: 'rgba(0,180,216,0.12)', color: '#00b4d8', badge: 'badge-accent' },
+  low: { bg: 'rgba(143,166,181,0.1)', color: '#8fa6b5', badge: 'badge-gray' },
+  info: { bg: 'rgba(143,166,181,0.1)', color: '#8fa6b5', badge: 'badge-gray' },
+};
+
+const SOURCE_ICONS = {
+  signIn: '\uD83D\uDD11', auditLog: '\uD83D\uDCCB', riskDetection: '\u26A0',
+  firewall: '\uD83D\uDEE1', windows: '\uD83D\uFDB5', syslog: '\u2699',
+};
+
+function fmtTime(d) {
+  if (!d) return '-';
+  try { const t = new Date(d); return t.toLocaleString(); } catch { return d; }
+}
+function timeAgo(d) {
+  if (!d) return '-';
+  const s = (Date.now() - new Date(d).getTime()) / 1000;
+  if (s < 60) return 'now'; if (s < 3600) return Math.floor(s / 60) + 'm'; return Math.floor(s / 3600) + 'h';
+}
 
 export default function Events() {
-  const { key: refreshKey } = useRefresh();
-  const r = useApi(() => Promise.all([apiGet('/events?size=500'), apiGet('/events/stats')]), [], refreshKey);
-  const [filter, setFilter] = useState('all');
-  const [search, setSearch] = useState('');
+  const { key: rk } = useRefresh();
+  const siem = useApi(() => fetch('/api/siem/summary').then(r => r.json()), [], rk);
+  const itdr = useApi(() => fetch('/api/itdr/summary').then(r => r.json()), [], rk);
+  const [sev, setSev] = useState('all');
+  const [q, setQ] = useState('');
+  const [logs, setLogs] = useState(null);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const abortRef = useRef(null);
 
-  const items = r.data ? (r.data[0]?.affected_items || []) : [];
-  const filtered = useMemo(() => {
-    if (!r.data) return [];
-    let result = items;
-    if (filter !== 'all') {
-      result = result.filter(e => {
-        const lvl = e.level || 0;
-        const sv = lvl >= 12 ? 'critical' : lvl >= 7 ? 'high' : lvl >= 4 ? 'medium' : 'low';
-        return sv === filter;
-      });
+  const fetchLogs = async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setLoadingLogs(true);
+    setFetchError(null);
+    try {
+      let url = '/api/siem/logs?limit=200';
+      if (sev !== 'all') url += `&severity=${sev}`;
+      if (q.trim()) url += `&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { signal: ac.signal });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const d = await res.json();
+      setLogs(d);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setFetchError(err.message || 'Failed to fetch logs');
+    } finally {
+      setLoadingLogs(false);
     }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      result = result.filter(e =>
-        (e.agent?.name || '').toLowerCase().includes(q) ||
-        (e.agent?.id || '').toLowerCase().includes(q) ||
-        (e.description || '').toLowerCase().includes(q) ||
-        (e.id || '').toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [items, filter, search, r.data]);
+  };
 
-  if (r.loading) return <LoadingSpinner />;
-  if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
+  if (siem.loading || itdr.loading) return <LoadingSpinner />;
+  if (siem.error || itdr.error) return <ErrorState message="Failed to load" />;
 
-  const [eventsRes, stats] = r.data;
-  const sev = stats.severity || {};
+  const siemD = siem.data || {};
+  const itdrD = itdr.data || {};
+  const logData = logs || { logs: [], total: 0 };
+  const entries = logData.logs || [];
 
-  const columns = [
-    { key: 'timestamp', label: 'Time', render: r => new Date(r.timestamp).toLocaleString() },
-    { key: 'severity', label: 'Level', render: r => {
-      const lvl = r.level || 0;
-      const sv = lvl >= 12 ? 'critical' : lvl >= 7 ? 'high' : lvl >= 4 ? 'medium' : 'low';
-      return <SeverityBadge severity={sv} />;
-    }},
-    { key: 'rule_id', label: 'Rule' },
-    { key: 'description', label: 'Description', render: r => (r.description || '').substring(0, 80) },
-    { key: 'agent', label: 'Agent', render: r => r.agent ? (r.agent.name || r.agent.id || '-') : '-' },
-    { key: 'groups', label: 'Group', render: r => (r.groups || []).slice(0, 2).join(', ') },
-  ];
+  const totalEvents = (siemD.total_logs || 0) + (itdrD.total_events || 0);
+  const highCrit = (siemD.by_severity?.critical || 0) + (itdrD.critical || 0) +
+                   (siemD.by_severity?.high || 0) + (itdrD.high || 0);
 
   return (
     <>
       <div className="kpi-row">
-        <KpiCard value={sev.Critical || 0} label="Critical (12+)" color="red" />
-        <KpiCard value={sev.High || 0} label="High (7-11)" color="amber" />
-        <KpiCard value={sev.Medium || 0} label="Medium (4-6)" color="accent" />
-        <KpiCard value={sev.Low || 0} label="Low (0-3)" color="secondary" />
+        <KpiCard value={totalEvents} label="Total Events" color="accent" />
+        <KpiCard value={highCrit} label="High + Critical" color="red" />
+        <KpiCard value={siemD.total_logs || 0} label="SIEM Logs" color="accent" />
+        <KpiCard value={itdrD.total_events || 0} label="Identity Events" color="green" sub="M365" />
+        <KpiCard value={Object.keys(siemD.by_source || {}).length} label="SIEM Sources" color="green" />
+        <KpiCard value={itdrD.sources_configured ? 'M365 Connected' : 'M365 Off'} label="ITDR Status" color={itdrD.sources_configured ? 'green' : 'red'} />
       </div>
+
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Recent Alerts ({filtered.length})</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search agent, ID, description..."
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 12px', borderRadius: 'var(--radius-sm)', width: 220, fontSize: 13, outline: 'none' }}
-            />
-            <FilterTabs tabs={[
-              { key: 'all', label: 'All' },
-              { key: 'critical', label: 'Critical' },
-              { key: 'high', label: 'High' },
-              { key: 'medium', label: 'Medium' },
-            ]} onChange={setFilter} />
+          <div className="card-title">Event Log{logs ? ` (${logData.total})` : ''}</div>
+          <div className="flex gap-8 items-center flex-wrap">
+            <select value={sev} onChange={e => setSev(e.target.value)}
+              className="select-sm">
+              <option value="all">All Severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="info">Info</option>
+            </select>
+            <input value={q} onChange={e => setQ(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && fetchLogs()}
+              placeholder="Search events..."
+              className="input-sm" style={{ width: 200 }} />
+            <button className="btn btn-sm btn-primary" onClick={fetchLogs} disabled={loadingLogs}>
+              {loadingLogs ? '...' : '\u2315 Query'}
+            </button>
           </div>
         </div>
-        <DataTable columns={columns} data={filtered} />
+        {fetchError && (
+          <div className="error-banner" style={{ padding: '10px 16px', background: 'rgba(255,71,87,0.1)', borderBottom: '1px solid var(--border)', color: '#ff4757', fontSize: 13 }}>
+            {fetchError}
+          </div>
+        )}
+
+        {entries.length === 0 ? (
+          <div className="empty-state">
+            {logs === null
+              ? 'Click "Query" to load events from SIEM and ITDR sources.'
+              : 'No events match your filters.'}
+          </div>
+        ) : (
+          <div className="table-container" style={{ maxHeight: 600, overflow: 'auto' }}>
+            <table>
+              <thead><tr className="th-sticky">
+                <th>Time</th><th>Source</th><th>Severity</th><th>Message</th><th>Details</th>
+              </tr></thead>
+              <tbody>
+                {entries.map((ev, i) => {
+                  const sc = SEVERITY_COLORS[ev.severity] || SEVERITY_COLORS.info;
+                  const icon = SOURCE_ICONS[ev.source] || '\u25CF';
+                  return (
+                    <tr key={ev.id || `${ev.timestamp}-${ev.source}-${i}`} style={{ background: ev.severity === 'critical' ? 'rgba(255,71,87,0.03)' : 'none' }}>
+                      <td className="text-sm text-nowrap" title={fmtTime(ev.timestamp)}>{timeAgo(ev.timestamp)}</td>
+                      <td><span className="badge badge-gray badge-xs">{icon} {ev.source || '-'}</span></td>
+                      <td><span className={`badge ${sc.badge} badge-xs`}>{ev.severity}</span></td>
+                      <td className="text-base truncate-sm">
+                        {(ev.message || ev.activity || ev.risk_type || ev.ip_address || '-').substring(0, 150)}
+                      </td>
+                      <td className="text-sm text-secondary">
+                        {ev.ip_src || ev.ip_dst || ev.user || ev.source_name || '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );

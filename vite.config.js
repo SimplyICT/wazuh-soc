@@ -2,12 +2,12 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  base: '/wazuh-soc-v2/',
+  base: '/soc/',
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      '/wazuh-api': {
+      '/api': {
         target: 'http://localhost:8095',
         changeOrigin: true,
       },

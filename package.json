@@ -1,5 +1,5 @@
 {
-  "name": "wazuh-soc",
+  "name": "soc-ui",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-query-devtools": "^5.101.2",
     "chart.js": "^4.4.7",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.2.0",

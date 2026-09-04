@@ -1,84 +1,75 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
-import StatusBadge from '../components/StatusBadge';
-import FilterTabs from '../components/FilterTabs';
+import { useRefresh } from '../components/RefreshContext';
+import KpiCard from '../components/KpiCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
-import { FixedSizeList as List } from 'react-window';
 
-function timeAgo(d) {
-  if (!d || d === '9999-12-31T23:59:59+00:00') return 'Just now';
-  const sec = (Date.now() - new Date(d).getTime()) / 1000;
-  if (sec < 60) return 'Just now';
-  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
-  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
-  return Math.floor(sec / 86400) + 'd ago';
-}
-
-const FILTER_TABS = [
-  { key: 'all', label: 'All' },
-  { key: 'active', label: 'Active' },
-  { key: 'offline', label: 'Offline' },
-];
-
-const COLUMNS = ['ID', 'Name', 'IP', 'OS', 'Status', 'Version', 'Last Seen'];
-const ROW_HEIGHT = 42;
-
-function renderRow(items, navigate) {
-  return function Row({ index, style }) {
-    const a = items[index];
-    if (!a) return null;
-    const os = a.os ? (a.os.name || '') + ' ' + (a.os.version || '') : 'Unknown';
-    return (
-      <div style={{ ...style, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
-           className="list-row" onClick={() => navigate(`/agent/${a.id}`)}>
-        <div style={{ flex: '0 0 60px', padding: '0 8px' }}>{a.id}</div>
-        <div style={{ flex: '1 1 150px', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
-        <div style={{ flex: '0 0 120px', padding: '0 8px' }}>{a.ip}</div>
-        <div style={{ flex: '1 1 180px', padding: '0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{os.substring(0, 30)}</div>
-        <div style={{ flex: '0 0 100px', padding: '0 8px' }}><StatusBadge status={a.status} /></div>
-        <div style={{ flex: '0 0 100px', padding: '0 8px' }}>{a.version || '-'}</div>
-        <div style={{ flex: '0 0 100px', padding: '0 8px' }}>{timeAgo(a.lastKeepAlive)}</div>
-      </div>
-    );
-  };
+const PI = { windows: '\uD83D\uFDB5', macos: '\uD83D\uFDB5', linux: '\uD83D\uDCBB', ios: '\uD83D\uDCF1', android: '\uD83D\uDCF1' };
+function pi(p) { return PI[p] || '\u2753'; }
+function fd(d) { if (!d) return '-'; try { return new Date(d).toLocaleString(); } catch { return d; } }
+function filterAgents(all, online, filter) {
+  if (filter === 'all') return all;
+  if (filter === 'online') return online;
+  return all.filter(x => x.status === 'offline');
 }
 
 export default function Agents() {
-  const r = useApi(() => apiGet('/agents?limit=500'), []);
-  const [filter, setFilter] = useState('all');
-  const navigate = useNavigate();
+  const { key: rk } = useRefresh();
+  const a = useApi(() => fetch('/api/agents/all').then(r => r.json()), [], rk);
+  const o = useApi(() => fetch('/api/agents/online').then(r => r.json()), [], rk);
+  const [f, sf] = useState('all');
 
-  const items = useMemo(() => {
-    const raw = r.data ? (r.data.affected_items || r.data) : [];
-    return filter === 'all' ? raw : raw.filter(a => a.status === filter);
-  }, [r.data, filter]);
+  if (a.loading || o.loading) return <LoadingSpinner />;
+  if (a.error) return <ErrorState message={a.error.message} onRetry={a.refetch} />;
+  if (o.error) return <ErrorState message={o.error.message} onRetry={o.refetch} />;
 
-  if (r.loading) return <LoadingSpinner />;
-  if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
-
-  const listHeight = Math.min(items.length * ROW_HEIGHT, 600);
+  const all = a.data?.agents || [];
+  const online = o.data?.agents || [];
+  const oc = online.length, ofc = all.length - oc;
+  const pc = {}; all.forEach(x => { pc[x.platform] = (pc[x.platform] || 0) + 1; });
+  const fl = filterAgents(all, online, f);
 
   return (
     <>
-      <FilterTabs tabs={FILTER_TABS} onChange={setFilter} />
+      <div className="kpi-row">
+        <KpiCard value={all.length} label="Total Agents" color="accent" sub="all registered" />
+        <KpiCard value={oc} label="Online" color="green" sub="WebSocket connected" />
+        <KpiCard value={ofc} label="Offline" color="red" sub="no connection" />
+        {Object.entries(pc).map(([p, c]) => <KpiCard key={p} value={c} label={p} color="accent" sub={pi(p)} />)}
+      </div>
+
       <div className="card">
-        <div className="table-container" style={{ padding: 0 }}>
-          <div style={{ display: 'flex', padding: '10px 0', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--text-secondary)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            <div style={{ flex: '0 0 60px', padding: '0 8px' }}>ID</div>
-            <div style={{ flex: '1 1 150px', padding: '0 8px' }}>Name</div>
-            <div style={{ flex: '0 0 120px', padding: '0 8px' }}>IP</div>
-            <div style={{ flex: '1 1 180px', padding: '0 8px' }}>OS</div>
-            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Status</div>
-            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Version</div>
-            <div style={{ flex: '0 0 100px', padding: '0 8px' }}>Last Seen</div>
+        <div className="card-header">
+          <div className="card-title">All Agents ({all.length})</div>
+          <div className="filter-tabs" style={{ margin: 0 }}>
+            <span className={`filter-tab ${f === 'all' ? 'active' : ''}`} onClick={() => sf('all')}>All</span>
+            <span className={`filter-tab ${f === 'online' ? 'active' : ''}`} onClick={() => sf('online')}>Online ({oc})</span>
+            <span className={`filter-tab ${f === 'offline' ? 'active' : ''}`} onClick={() => sf('offline')}>Offline ({ofc})</span>
           </div>
-          <List height={listHeight} itemCount={items.length} itemSize={ROW_HEIGHT} width="100%">
-            {renderRow(items, navigate)}
-          </List>
         </div>
+        {fl.length === 0 ? (
+          <div className="empty-state">No agents. Deploy via Our Agents page.</div>
+        ) : (
+          <div className="table-container" style={{ maxHeight: 600, overflow: 'auto' }}>
+            <table>
+              <thead><tr className="th-sticky">
+                <th>Platform</th><th>Hostname</th><th>Version</th><th>Status</th><th>Last Seen</th>
+              </tr></thead>
+              <tbody>
+                {fl.map((x, i) => (
+                  <tr key={x.hostname}>
+                    <td style={{ fontSize: 16 }} title={x.platform}>{pi(x.platform)}</td>
+                    <td style={{ fontWeight: 600 }}>{x.hostname}</td>
+                    <td className="text-sm text-secondary">{x.version}</td>
+                    <td><span className={`badge ${x.status === 'online' ? 'badge-green' : 'badge-gray'}`}>{x.status}</span></td>
+                    <td className="text-sm text-secondary">{fd(x.last_seen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );

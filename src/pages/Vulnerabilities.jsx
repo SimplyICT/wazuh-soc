@@ -1,49 +1,160 @@
+import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
+import { useRefresh } from '../components/RefreshContext';
 import KpiCard from '../components/KpiCard';
-import SeverityBadge from '../components/SeverityBadge';
-import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
-import EmptyState from '../components/EmptyState';
+import { useToast } from '../context/ToastContext';
+
+function severityBadgeClass(severity) {
+  if (severity === 'critical') return 'badge-red';
+  if (severity === 'high') return 'badge-amber';
+  return 'badge-gray';
+}
 
 export default function Vulnerabilities() {
-  const r = useApi(() => apiGet('/overview/vulnerabilities'), []);
+  const { key: rk } = useRefresh();
+  const r = useApi(() => fetch('/api/vuln/summary').then(r => r.json()), [], rk);
+  const [findings, setFindings] = useState(null);
+  const [sevFilter, setSevFilter] = useState('');
+  const [detail, setDetail] = useState(null);
+  const toast = useToast();
+
+  const fetchFindings = async () => {
+    try {
+      let url = '/api/vuln/findings';
+      if (sevFilter) url += `?severity=${sevFilter}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setFindings(d);
+    } catch (e) {
+      toast('Failed to fetch findings: ' + e.message, 'error');
+    }
+  };
+
+  const handleScan = async () => {
+    try {
+      toast('CVE database update started...', 'info');
+      const res = await fetch('/api/vuln/update-cve', { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      toast(`Fetched ${d.fetched || 0} CVEs`, 'success');
+      r.refetch();
+    } catch (e) {
+      toast('CVE update failed: ' + e.message, 'error');
+    }
+  };
+
+  const handleAgentScan = async () => {
+    try {
+      toast('Scanning online agents for packages...', 'info');
+      const res = await fetch('/api/vuln/scan', { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      toast(`Queued package scan on ${d.queued || 0} online agents`, 'success');
+      setTimeout(() => { r.refetch(); fetchFindings(); }, 8000);
+    } catch (e) {
+      toast('Agent scan failed: ' + e.message, 'error');
+    }
+  };
 
   if (r.loading) return <LoadingSpinner />;
   if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
-  const items = r.data.affected_items || [];
-  if (!items.length) return <div className="card"><EmptyState message="Vulnerability Detector not enabled on this Wazuh server." /></div>;
-
-  const sum = { Critical: 0, High: 0, Medium: 0, Low: 0 };
-  items.forEach(v => {
-    const s = (v.severity || '').toLowerCase();
-    const key = s.charAt(0).toUpperCase() + s.slice(1);
-    if (sum[key] !== undefined) sum[key]++;
-  });
-
-  const columns = [
-    { key: 'cve', label: 'CVE', render: r => r.cve || '-' },
-    { key: 'agent_id', label: 'Agent' },
-    { key: 'package', label: 'Package', render: r => r.package?.name || '-' },
-    { key: 'severity', label: 'Severity', render: r => <SeverityBadge severity={r.severity} /> },
-    { key: 'cvss_score', label: 'CVSS' },
-    { key: 'status', label: 'Status' },
-    { key: 'title', label: 'Title', render: r => (r.title || '').substring(0, 50) },
-  ];
+  const d = r.data || {};
+  const items = findings?.findings || [];
 
   return (
     <>
       <div className="kpi-row">
-        <KpiCard value={sum.Critical} label="Critical" color="red" />
-        <KpiCard value={sum.High} label="High" color="amber" />
-        <KpiCard value={sum.Medium} label="Medium" color="accent" />
-        <KpiCard value={sum.Low} label="Low" color="secondary" />
+        <KpiCard value={d.total_findings || 0} label="Vulnerabilities" color="accent" />
+        <KpiCard value={d.by_severity?.critical || 0} label="Critical" color="red" />
+        <KpiCard value={d.by_severity?.high || 0} label="High" color="amber" />
+        <KpiCard value={d.by_severity?.medium || 0} label="Medium" color="accent" />
+        <KpiCard value={d.cves_in_db || 0} label="CVEs in DB" color="green" sub="last 60 days" />
+        <KpiCard value={d.agents_scanned || 0} label="Agents Scanned" color="green" />
       </div>
+
       <div className="card">
-        <DataTable columns={columns} data={items} />
+        <div className="card-header">
+          <div className="card-title">Vulnerability Findings ({items.length || d.total_findings || 0})</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select value={sevFilter} onChange={e => setSevFilter(e.target.value)}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', fontSize: 12, outline: 'none' }}>
+              <option value="">All Severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <button className="btn btn-sm btn-primary" onClick={fetchFindings}>Query</button>
+            <button className="btn btn-sm" onClick={handleScan}>Update CVEs</button>
+            <button className="btn btn-sm btn-primary" onClick={handleAgentScan}>Scan Agents</button>
+          </div>
+        </div>
+
+        {items.length === 0 && findings === null && (
+          <div className="empty-state">
+            <p style={{ marginBottom: 12 }}>No vulnerability data yet.</p>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              1. Click "Update CVEs" to fetch the latest CVE database (NVD API)
+              <br />
+              2. Deploy agents and collect package inventory
+              <br />
+              3. Run a scan to match packages against CVEs
+            </p>
+          </div>
+        )}
+
+        {items.length === 0 && findings !== null && (
+          <div className="empty-state">No findings match your filters. Run an agent scan first.</div>
+        )}
+
+        {items.length > 0 && (
+          <div className="table-container" style={{ maxHeight: 500, overflow: 'auto' }}>
+            <table>
+              <thead><tr style={{ position: 'sticky', top: 0, background: 'var(--card-bg)' }}>
+                <th>CVE</th><th>Severity</th><th>Score</th><th>Package</th><th>Installed</th><th>Agent</th><th>Description</th>
+              </tr></thead>
+              <tbody>
+                {items.map((f, i) => (
+                  <tr key={f.cve_id} style={{ cursor: 'pointer' }} onClick={() => setDetail(detail?.cve_id === f.cve_id ? null : f)}>
+                    <td><code style={{ fontSize: 11 }}>{f.cve_id}</code></td>
+                    <td><span className={`badge ${severityBadgeClass(f.severity)}`} style={{ fontSize: 10 }}>{f.severity}</span></td>
+                    <td style={{ fontSize: 12 }}>{f.score || '-'}</td>
+                    <td style={{ fontSize: 12 }}>{f.package_name}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{f.package_version}</td>
+                    <td style={{ fontSize: 11 }}>{f.agent_id}</td>
+                    <td style={{ fontSize: 11, maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.description?.substring(0, 80)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+
+      {detail && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">{detail.cve_id}</div>
+            <button className="btn btn-sm" onClick={() => setDetail(null)}>Close</button>
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+            <p><strong>Package:</strong> {detail.package_name} ({detail.package_version})</p>
+            <p><strong>Severity:</strong> {detail.severity} (CVSS: {detail.score})</p>
+            <p><strong>Published:</strong> {detail.published}</p>
+            <p><strong>Description:</strong> {detail.description}</p>
+            <p><strong>Agent:</strong> {detail.agent_id}</p>
+            <p style={{ marginTop: 8 }}>
+              <a href={`https://nvd.nist.gov/vuln/detail/${detail.cve_id}`} target="_blank" rel="noopener noreferrer" className="btn btn-sm">
+                View on NVD
+              </a>
+            </p>
+          </div>
+        </div>
+      )}
     </>
   );
 }

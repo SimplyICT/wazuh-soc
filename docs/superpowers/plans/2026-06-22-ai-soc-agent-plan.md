@@ -611,11 +611,11 @@ Find and remove these lines (around the old `autopilot_cases.json` logic):
 - Old `_generate_autopilot_case` function body
 - Old autopilot CRUD endpoints that read/write the JSON file
 
-For the existing autopilot CRUD endpoints (`/wazuh-api/autopilot/cases`, etc.), update them to query Supabase:
+For the existing autopilot CRUD endpoints (`/api/autopilot/cases`, etc.), update them to query Supabase:
 
 ```python
 # Near line 966, replace the old case listing
-@app.get("/wazuh-api/autopilot/cases")
+@app.get("/api/autopilot/cases")
 def autopilot_list_cases():
     sb = _get_supabase()
     if not sb:
@@ -630,7 +630,7 @@ def autopilot_list_cases():
 
 ```python
 # Replace the old case detail endpoint (around line 982)
-@app.get("/wazuh-api/autopilot/cases/{case_id}")
+@app.get("/api/autopilot/cases/{case_id}")
 def autopilot_get_case(case_id: str):
     sb = _get_supabase()
     if not sb:
@@ -648,7 +648,7 @@ def autopilot_get_case(case_id: str):
 - [ ] **Step 6: Update approve/reject/execute endpoints for Supabase**
 
 ```python
-@app.post("/wazuh-api/autopilot/cases/{case_id}/approve")
+@app.post("/api/autopilot/cases/{case_id}/approve")
 def autopilot_approve_case(case_id: str):
     sb = _get_supabase()
     if not sb:
@@ -664,7 +664,7 @@ def autopilot_approve_case(case_id: str):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/wazuh-api/autopilot/cases/{case_id}/reject")
+@app.post("/api/autopilot/cases/{case_id}/reject")
 def autopilot_reject_case(case_id: str):
     sb = _get_supabase()
     if not sb:
@@ -679,7 +679,7 @@ def autopilot_reject_case(case_id: str):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/wazuh-api/autopilot/cases/{case_id}/execute")
+@app.post("/api/autopilot/cases/{case_id}/execute")
 def autopilot_execute_case(case_id: str):
     sb = _get_supabase()
     if not sb:
@@ -709,7 +709,7 @@ def autopilot_execute_case(case_id: str):
 - [ ] **Step 7: Update stats endpoint for Supabase**
 
 ```python
-@app.get("/wazuh-api/autopilot/stats")
+@app.get("/api/autopilot/stats")
 def autopilot_stats():
     sb = _get_supabase()
     if not sb:
@@ -894,7 +894,7 @@ cd /home/aiagent/mission-control-ui && git add soc_agent.py && git commit -m "fe
 ### Task 8: Update React frontend to show AI analysis
 
 **Files:**
-- Modify: `/home/aiagent/wazuh-soc/src/pages/AutopilotCase.jsx`
+- Modify: `/home/aiagent/soc-ui/src/pages/AutopilotCase.jsx`
 
 - [ ] **Step 1: Add AI analysis section to case detail**
 
@@ -933,13 +933,13 @@ function ConfidenceBadge({ confidence }) {
 - [ ] **Step 2: Build and deploy**
 
 ```bash
-cd /home/aiagent/wazuh-soc && bun run build
+cd /home/aiagent/soc-ui && bun run build
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/aiagent/wazuh-soc && git add src/pages/AutopilotCase.jsx && git commit -m "feat: add AI analysis display to case detail page"
+cd /home/aiagent/soc-ui && git add src/pages/AutopilotCase.jsx && git commit -m "feat: add AI analysis display to case detail page"
 ```
 
 ---
@@ -962,17 +962,17 @@ sudo systemctl restart mission-control-ui
 curl -s -c /tmp/test_cookies.txt -X POST -d "username=admin&password=admin123" http://127.0.0.1:8095/login
 
 # Test autopilot stats
-curl -s -b /tmp/test_cookies.txt http://127.0.0.1:8095/wazuh-api/autopilot/stats
+curl -s -b /tmp/test_cookies.txt http://127.0.0.1:8095/api/autopilot/stats
 
 # Test case listing
-curl -s -b /tmp/test_cookies.txt http://127.0.0.1:8095/wazuh-api/autopilot/cases
+curl -s -b /tmp/test_cookies.txt http://127.0.0.1:8095/api/autopilot/cases
 
 # Trigger scan
-curl -s -b /tmp/test_cookies.txt -X POST http://127.0.0.1:8095/wazuh-api/autopilot/scan
+curl -s -b /tmp/test_cookies.txt -X POST http://127.0.0.1:8095/api/autopilot/scan
 ```
 
 Expected: All return JSON without errors
 
 - [ ] **Step 3: Verify SPA loads correctly**
 
-Open browser to `/wazuh-soc-v2` — Autopilot page should show cases from Supabase.
+Open browser to `/soc` — Autopilot page should show cases from Supabase.

@@ -206,7 +206,7 @@ cd /home/aiagent/mission-control-ui && git add ai_remediate.py && git commit -m 
 Replace the existing `autopilot_execute` function:
 
 ```python
-@app.post("/wazuh-api/autopilot/cases/{case_id}/execute")
+@app.post("/api/autopilot/cases/{case_id}/execute")
 def autopilot_execute(case_id: str):
     c = get_case(case_id)
     if not c:
@@ -276,11 +276,11 @@ sudo systemctl restart mission-control-ui
 
 ```bash
 # Get a case ID
-curl -sL -b /tmp/cookies.txt http://127.0.0.1:8095/wazuh-api/autopilot/cases | python3 -c "import sys,json;d=json.load(sys.stdin);items=d.get('affected_items',[]);print(items[0]['id'] if items else 'no cases')"
+curl -sL -b /tmp/cookies.txt http://127.0.0.1:8095/api/autopilot/cases | python3 -c "import sys,json;d=json.load(sys.stdin);items=d.get('affected_items',[]);print(items[0]['id'] if items else 'no cases')"
 
 # Approve it
-curl -sL -b /tmp/cookies.txt -X POST http://127.0.0.1:8095/wazuh-api/autopilot/cases/{ID}/approve
+curl -sL -b /tmp/cookies.txt -X POST http://127.0.0.1:8095/api/autopilot/cases/{ID}/approve
 
 # Execute it
-curl -sL -b /tmp/cookies.txt -X POST http://127.0.0.1:8095/wazuh-api/autopilot/cases/{ID}/execute | python3 -m json.tool
+curl -sL -b /tmp/cookies.txt -X POST http://127.0.0.1:8095/api/autopilot/cases/{ID}/execute | python3 -m json.tool
 ```

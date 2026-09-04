@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { apiGet, apiPost } from '../api/wazuhApi';
+import { apiGet, apiPost } from '../api/api';
 import SeverityBadge from '../components/SeverityBadge';
 import CaseStatusBadge from '../components/CaseStatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -27,10 +27,9 @@ export default function AutopilotCase() {
     return [];
   };
 
-  const c = r.data;
+  const c = { ...r.data };
   c.events = safe(c.events);
   c.entities = safe(c.entities);
-  c.actions = safe(c.actions);
   if (typeof c.response_plan === 'string') try { c.response_plan = JSON.parse(c.response_plan); } catch { c.response_plan = []; }
   if (typeof c.alert_ids === 'string') try { c.alert_ids = JSON.parse(c.alert_ids); } catch { c.alert_ids = []; }
 
@@ -115,7 +114,7 @@ export default function AutopilotCase() {
           <div className="card-header"><div className="card-title">Entities ({(c.entities || []).length})</div></div>
           {c.entities?.length ? (
             <table><tbody>{c.entities.map((e, i) => (
-              <tr key={i}><td>{e.type || e.source || '-'}</td><td>{e.value || e.source || '-'}</td><td><span className="badge badge-gray">{e.role || ''}</span></td></tr>
+              <tr key={e.type + e.value}><td>{e.type || e.source || '-'}</td><td>{e.value || e.source || '-'}</td><td><span className="badge badge-gray">{e.role || ''}</span></td></tr>
             ))}</tbody></table>
           ) : <div className="empty-state">No entities</div>}
         </div>
@@ -124,7 +123,7 @@ export default function AutopilotCase() {
             <div className="card-header"><div className="card-title">Response Plan</div></div>
             <table><thead><tr><th>Action</th><th>Target</th><th>Rationale</th></tr></thead>
               <tbody>{planActions.map((a, i) => (
-                <tr key={i}><td><span className="badge badge-accent">{a.type}</span></td><td>{a.target || '-'}</td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{(a.rationale || '').substring(0, 100)}</td></tr>
+                <tr key={a.type + a.target}><td><span className="badge badge-accent">{a.type}</span></td><td>{a.target || '-'}</td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{(a.rationale || '').substring(0, 100)}</td></tr>
               ))}</tbody>
             </table>
           </div>
@@ -134,7 +133,7 @@ export default function AutopilotCase() {
           <div style={{ maxHeight: 300, overflowY: 'auto' }}>
             <table><tbody>
               {(c.events || []).slice().reverse().map((ev, i) => (
-                <tr key={i}><td style={{ whiteSpace: 'nowrap' }}>{formatDate(ev.timestamp)}</td>
+                <tr key={ev.alert_id || ev.timestamp}><td style={{ whiteSpace: 'nowrap' }}>{formatDate(ev.timestamp)}</td>
                   <td><span className={`badge ${ev.type === 'approved' ? 'badge-green' : ev.type === 'rejected' ? 'badge-red' : ev.type === 'triaged' || ev.type === 'investigated' ? 'badge-accent' : 'badge-gray'}`}>{ev.type}</span></td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{ev.alert_id || ''}</td></tr>
               ))}

@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
+import { apiGet } from '../api/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
 
@@ -43,7 +43,7 @@ export default function AlertDetail() {
           {remediation?.suggested_actions?.length ? (
             <table><thead><tr><th>Action</th><th>Detail</th></tr></thead>
               <tbody>{remediation.suggested_actions.map((act, i) => (
-                <tr key={i}><td><span className="badge badge-accent">{act.action}</span></td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{act.detail || ''}</td></tr>
+                <tr key={act.action + act.detail}><td><span className="badge badge-accent">{act.action}</span></td><td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{act.detail || ''}</td></tr>
               ))}</tbody>
             </table>
           ) : <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No remediation suggestions available.</div>}

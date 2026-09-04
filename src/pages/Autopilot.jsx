@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { apiGet } from '../api/wazuhApi';
+import { apiGet } from '../api/api';
 import KpiCard from '../components/KpiCard';
 import SeverityBadge from '../components/SeverityBadge';
 import CaseStatusBadge from '../components/CaseStatusBadge';

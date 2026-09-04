@@ -1,132 +1,106 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
-import { apiGet, apiPost } from '../api/wazuhApi';
 import KpiCard from '../components/KpiCard';
-import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorState from '../components/ErrorState';
-import { useToast } from '../context/ToastContext';
+
+const TYPE_COLORS = {
+  IPv4: 'badge-accent', domain: 'badge-green', hostname: 'badge-gray',
+  URL: 'badge-amber', MD5: 'badge-red', SHA256: 'badge-red',
+  SHA1: 'badge-red', email: 'badge-gray', FilePath: 'badge-gray',
+  Mutex: 'badge-gray', CVE: 'badge-red',
+};
 
 export default function Threats() {
-  const otx = useApi(() => apiGet('/otx/status'), []);
-  const iocs = useApi(() => apiGet('/otx/iocs'), []);
-  const toast = useToast();
-
+  const r = useApi(() => fetch('/api/threat-intel/summary').then(r => r.json()), []);
+  const [iocData, setIocData] = useState(null);
   const [typeFilter, setTypeFilter] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  if (otx.loading || iocs.loading) return <LoadingSpinner />;
-  if (otx.error) return <ErrorState message={otx.error.message} onRetry={otx.refetch} />;
-  if (iocs.error) return <ErrorState message={iocs.error.message} onRetry={iocs.refetch} />;
-
-  const status = otx.data;
-  const items = iocs.data?.iocs || [];
-  const enabled = status.enabled;
-
-  const filtered = useMemo(() => {
-    let f = items;
-    if (typeFilter) f = f.filter(i => i.type === typeFilter);
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      f = f.filter(i => i.value.toLowerCase().includes(q));
+  const fetchIocs = async () => {
+    setLoading(true);
+    try {
+      let url = '/api/threat-intel/iocs?limit=500';
+      if (typeFilter) url += `&type=${typeFilter}`;
+      if (search.trim()) url += `&q=${encodeURIComponent(search)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setIocData(data);
+    } catch (err) {
+      console.error('Failed to fetch IOCs:', err);
+    } finally {
+      setLoading(false);
     }
-    return f;
-  }, [items, typeFilter, searchQuery]);
-
-  const typeCounts = {};
-  items.forEach(i => { typeCounts[i.type] = (typeCounts[i.type] || 0) + 1; });
-
-  const typeLabels = Object.keys(typeCounts).sort();
-
-  const handleRefresh = () => {
-    apiPost('/otx/refresh')
-      .then(d => {
-        if (d.status === 'error') toast(`OTX update failed: ${d.message || 'unknown'}`, 'error');
-        else toast(`OTX updated: ${d.total_iocs} IOCs`, 'success');
-        otx.refetch(); iocs.refetch();
-      })
-      .catch(e => toast(`OTX refresh failed: ${e.message}`, 'error'));
   };
 
-  const handleDownloadCSV = () => {
-    if (!items.length) { toast('No IOCs to download', 'error'); return; }
-    apiGet('/otx/iocs').then(d => {
-      const lines = ['type,value,category'];
-      (d.iocs || []).forEach(i => lines.push(`${i.type},${i.value},${i.category || ''}`));
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'otx_iocs.csv';
-      a.click();
-      toast('Downloaded', 'success');
-    }).catch(e => toast(`Download failed: ${e.message}`, 'error'));
-  };
+  if (r.loading) return <LoadingSpinner />;
+  if (r.error) return <ErrorState message={r.error.message} onRetry={r.refetch} />;
 
-  const typeLabel = (t) => {
-    const map = { ip: 'IP', domain: 'Domain', md5: 'MD5', sha1: 'SHA1', sha256: 'SHA256', url: 'URL' };
-    return map[t] || t;
-  };
-
-  const typeColor = (t) => {
-    if (t === 'ip') return 'badge-red';
-    if (t === 'domain') return 'badge-amber';
-    if (t.includes('sha') || t === 'md5') return 'badge-accent';
-    return 'badge-gray';
-  };
-
-  const columns = [
-    { key: 'type', label: 'Type', render: r => <span className={`badge ${typeColor(r.type)}`}>{typeLabel(r.type)}</span> },
-    { key: 'value', label: 'Value', render: r => <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{r.value}</span> },
-    { key: 'category', label: 'Category', render: r => <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{r.category || ''}</span> },
-  ];
+  const d = r.data || {};
+  const iocs = iocData?.iocs || [];
+  const byType = d.by_type || {};
 
   return (
     <>
       <div className="kpi-row">
-        <KpiCard value={enabled ? 'Active' : 'Inactive'} label="OTX Integration" color={enabled ? 'green' : 'red'} />
-        <KpiCard value={status.total_iocs || 0} label="Total IOCs" color="accent" />
-        <KpiCard value={status.ips || 0} label="Malicious IPs" color="amber" />
-        <KpiCard value={status.domains || 0} label="Malicious Domains" color="accent" />
-        <KpiCard value={status.hashes || 0} label="File Hashes" color="secondary" />
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-        <span style={{ color: 'var(--text-secondary)', fontSize: 13, marginRight: 4 }}>Filter:</span>
-        <button className={`btn ${typeFilter === '' ? 'btn-primary' : ''}`} onClick={() => setTypeFilter('')}>All</button>
-        {typeLabels.map(t => (
-          <button key={t} className={`btn ${typeFilter === t ? 'btn-primary' : ''}`} onClick={() => setTypeFilter(t)}>
-            {t} ({typeCounts[t]})
-          </button>
-        ))}
-        {enabled && <><button className="btn" onClick={handleRefresh}>Refresh</button><button className="btn" onClick={handleDownloadCSV}>Download CSV</button></>}
-      </div>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-header"><div className="card-title">Integration Details</div></div>
-        <table><tbody>
-          <tr><td>Status</td><td><span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'Active' : 'Inactive'}</span></td></tr>
-          <tr><td>Rules File</td><td>{status.size_bytes ? `${(status.size_bytes / 1024).toFixed(1)} KB` : '\u2014'}</td></tr>
-          <tr><td>Last Updated</td><td>{status.last_updated ? new Date(status.last_updated).toLocaleString() : '\u2014'}</td></tr>
-          <tr><td>IOC Count</td><td>{status.total_iocs || 0}</td></tr>
-          <tr><td>Pulse Sources</td><td>{status.pulse_count || '\u2014'}</td></tr>
-        </tbody></table>
+        <KpiCard value={d.total_iocs || 0} label="Total IOCs" color="accent" />
+        <KpiCard value={Object.keys(byType).length} label="IOC Types" color="green" />
+        <KpiCard value={Object.keys(d.by_source || {}).length} label="Sources" color="accent" sub={d.sources_configured?.otx ? 'OTX connected' : 'OTX not configured'} />
+        <KpiCard value={d.last_updated ? new Date(d.last_updated).toLocaleDateString() : '-'} label="Last Updated" color="green" />
       </div>
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Indicators of Compromise <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: 12 }}>({filtered.length}/{items.length})</span></div>
-          <input
-            style={{ background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 12px', borderRadius: 4, width: 200, fontSize: 13 }}
-            placeholder="Search IOCs..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-        </div>
-        {filtered.length ? (
-          <div className="table-container" style={{ maxHeight: 500, overflowY: 'auto' }}>
-            <DataTable columns={columns} data={filtered} />
+          <div className="card-title">Indicators of Compromise ({iocData?.iocs?.length || d.total_iocs || 0})</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {Object.keys(byType).slice(0, 6).map(t => (
+              <span key={t} className={`filter-tab ${typeFilter === t ? 'active' : ''}`}
+                style={{ fontSize: 11, cursor: 'pointer' }}
+                onClick={() => setTypeFilter(typeFilter === t ? '' : t)}>
+                {t} ({byType[t]})
+              </span>
+            ))}
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && fetchIocs()}
+              placeholder="Search..."
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', width: 150, fontSize: 12, outline: 'none' }} />
+            <button className="btn btn-sm btn-primary" onClick={fetchIocs} disabled={loading}>
+              {loading ? '...' : 'Query'}
+            </button>
+            <button className="btn btn-sm" onClick={async () => { try { await fetch('/api/threat-intel/update', { method: 'POST' }); } catch (err) { console.error('Failed to update threat intel:', err); } fetchIocs(); r.refetch(); }}>
+              Update
+            </button>
           </div>
-        ) : <div className="empty-state">No IOCs match your filter.</div>}
+        </div>
+
+        {iocs.length === 0 && iocData === null ? (
+          <div className="empty-state">Click "Query" to load IOCs, or "Update" to fetch from threat intel sources.</div>
+        ) : iocs.length === 0 ? (
+          <div className="empty-state">No IOCs match your filters.</div>
+        ) : (
+          <div className="table-container" style={{ maxHeight: 500, overflow: 'auto' }}>
+            <table>
+              <thead><tr style={{ position: 'sticky', top: 0, background: 'var(--card-bg)' }}>
+                <th>Type</th><th>Indicator</th><th>Source</th><th>Description</th><th>Tags</th>
+              </tr></thead>
+              <tbody>
+                {iocs.map((ioc, i) => (
+                  <tr key={ioc.indicator}>
+                    <td><span className={`badge ${TYPE_COLORS[ioc.type] || 'badge-gray'}`} style={{ fontSize: 10 }}>{ioc.type}</span></td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{ioc.indicator}</td>
+                    <td style={{ fontSize: 11 }}>{ioc.source}</td>
+                    <td style={{ fontSize: 11, maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ioc.description}</td>
+                    <td>{(ioc.tags || []).slice(0, 3).map((t, j) =>
+                      <span key={t} className="badge badge-gray" style={{ fontSize: 9, marginRight: 2 }}>{t}</span>)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );
