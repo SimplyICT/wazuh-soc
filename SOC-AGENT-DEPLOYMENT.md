@@ -10,8 +10,11 @@
 - Persistent agent ID fix applied (agent.id file)
 
 ### Agent configuration
-- Connects to: `http://208.87.135.84:8095/api/agent/ws`
+- Connects to: `http://10.121.16.163:8095/api/agent/ws` (gpu-ajob box, Asgard ZeroTier mesh)
 - No API key required in current agent code (optional `--key` flag)
+
+> Status 2026-09-04: mission-soc (incl. `/api/agent/ws`) now runs on gpu-ajob at
+> `10.121.16.163:8095` — the `.84:8095` endpoints below are historical.
 
 ## The Problem
 

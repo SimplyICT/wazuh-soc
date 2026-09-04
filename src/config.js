@@ -2,9 +2,10 @@
  * Base URL for the SOC API server.
  *
  * Used as the prefix for all API requests made by the frontend.
- * In development this points to the demo/prototyping server.
+ * The SOC runs on the gpu-ajob box, reachable over the Asgard ZeroTier mesh
+ * (not the public internet — ufw is mesh + fleet only).
  */
-export const SERVER_BASE_URL = 'http://208.87.135.84:8095';
+export const SERVER_BASE_URL = 'http://10.121.16.163:8095';
 
 /**
  * Host (hostname:port) of the API server.
@@ -18,4 +19,4 @@ export const SERVER_BASE_URL = 'http://208.87.135.84:8095';
  *
  * @constant {string}
  */
-export const SERVER_HOST = '208.87.135.84:8095';
+export const SERVER_HOST = '10.121.16.163:8095';

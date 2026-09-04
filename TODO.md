@@ -16,8 +16,8 @@
 ---
 
 ## Quick Reference
-- **SOC URL**: `http://208.87.135.84:8095/soc/`
-- **Agents online**: `http://208.87.135.84:8095/api/agents/online`
-- **Windows deploy (RMM)**: `cmd /c "curl -o install.cmd http://208.87.135.84:8095/api/agent/install/windows-batch && install.cmd"`
-- **Linux deploy**: `curl -s http://208.87.135.84:8095/api/edr/install | sudo bash`
-- **macOS deploy**: `curl -sL http://208.87.135.84:8095/api/agent/install/macos | sudo bash`
+- **SOC URL**: `http://10.121.16.163:8095/soc/` (Asgard ZeroTier mesh — gpu-ajob box)
+- **Agents online**: `http://10.121.16.163:8095/api/agents/online`
+- **Windows deploy (RMM)**: `cmd /c "curl -o install.cmd http://10.121.16.163:8095/api/agent/install/windows-batch && install.cmd"`
+- **Linux deploy**: `curl -s http://10.121.16.163:8095/api/edr/install | sudo bash`
+- **macOS deploy**: `curl -sL http://10.121.16.163:8095/api/agent/install/macos | sudo bash`
