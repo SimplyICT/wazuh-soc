@@ -125,20 +125,35 @@
   consolidation via GDAP), scopes `AuditLog.Read.All`, `IdentityRiskEvent.Read.All`,
   `Directory.Read.All`, `User.Read.All`.
 
-### Phase 2 — Action Tier Engine (AI everywhere, humans only for major change)
-- Classify every response action into tiers in `ai_remediate.py`:
+### Phase 2 — Action Tier Engine (✅ SHIPPED 2026-09-04; restart pending)
+- `ai_remediate.py` gains `ACTION_TIERS` + `classify_case()` + `rollback_notes()`:
   - **Tier 1 — auto (reversible / contained)**: add watchlist, suppress known-FP
-    rule for a source, notify, session-ish/sign-in revoke for one user, isolate a
-    single endpoint, block a single IOC at edge.
-  - **Tier 2 — human-gated (major change)** ★ the user's line: firmware/driver/
-    hardware changes, tenant-wide config or policy changes, mass Isolations,
-    deleting data, changing MFA requirements, network-wide firewall changes, geo-
-    blocking an entire region, offboarding domains.
-- Autopilot flow: `triage → decision {resolve | auto-act (Tier1) | case (Tier2)}`
-  → Tier-1 actions execute immediately with full audit trail; Tier-2 lands in
-  ReviewQueue with SLA + escalate. Confidence < threshold → always human.
-- Fix the `execute` stub: real background task invoking `ai_remediate.execute_case`,
-  with dry-run + rollback notes for Tier-2.
+    rule for a source, notify, ping, informational review/investigate steps.
+  - **Tier 2 — human-gated (major change)** ★ the user's line: block_ip (iptables),
+    isolate/quarantine, session/token revoke, MFA/tenant-wide policy changes,
+    deletes, patches/reboots/firmware, offboarding. **Unknown actions default to
+    Tier 2** (conservative); informational step prefixes (`review_`, `verify_`,
+    `investigate_`, …) default to Tier 1.
+- `execute_case(case, tier=None, dry_run=False)` — tier-filtered execution and a
+  dry-run preview with per-action rollback notes.
+- Autopilot scanner (`app.py`): Tier-1 actions now execute immediately at case
+  creation with an audit trail (`tier1_auto_executed` event + `ai_audit_log.json`);
+  **the old branch that auto-executed the ENTIRE plan for level≥15/confidence≥0.9
+  (including destructive actions) is removed**. Tier-2 waits for human approval.
+- `POST /api/autopilot/cases/{id}/execute` (soc_api.py) is now a **real background
+  task**: gated to approved cases; returns a dry-run preview of the planned
+  actions with rollback notes; runs the Tier-2 remainder after approval and
+  records `actions`/`executed_at`/events; status → `resolved`.
+- Fixed: `add_watchlist` plan actions were silently dropped by the executor
+  (dispatch key mismatch) — now run. Unknown actions with a target are skipped
+  with a human-review note instead of silently pinging the target.
+- **Verified**: `scripts/test_tier_engine.py` — 13 tests (classification, dry-run,
+  tier filtering, endpoint gating/lifecycle, scanner integration) green.
+- **Pending deploy**: `systemctl restart mission-soc` on the box to load the new
+  code (Phase-1 pending restart covers both).
+- **Remaining Phase-2 slice (needs UX decision)**: Tier-2 cases should surface in
+  the ReviewQueue (claim/escalate/SLA) in addition to Autopilot's approve/execute
+  flow — currently they stay in Autopilot only.
 
 ### Phase 3 — Active Threat-Hunting Reports
 - `report_generator.py` gains a **Threat Hunting section**: for each active
