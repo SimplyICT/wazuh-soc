@@ -3,7 +3,7 @@
 import json, os, ssl, sys, urllib.request, time
 
 TRMM_API_KEY = os.environ.get("TRMM_API_KEY")
-SOC_SERVER = os.environ.get("SOC_SERVER", "https://208.87.135.84:8095")
+SOC_SERVER = os.environ.get("SOC_SERVER", "http://173.208.232.91:8095")
 TRMM_API = "https://api.simplyict.com.au"
 
 def api_get(url, key=None):
@@ -72,7 +72,7 @@ def main():
         fix_cmd = (
             'cmd /c (echo @echo off'
             ' && echo cd /d "C:\\ProgramData\\SOCAgent"'
-            ' && echo "C:\\Program Files\\Python312\\python.exe" agent.py --server 208.87.135.84:8095 ^>^> "C:\\ProgramData\\SOCAgent\\agent.log" 2^>^&1'
+            ' && echo "C:\\Program Files\\Python312\\python.exe" agent.py --server 173.208.232.91:8095 --key ac819555a88829a086d429cfec5daa45 ^>^> "C:\\ProgramData\\SOCAgent\\agent.log" 2^>^&1'
             ') > "C:\\ProgramData\\SOCAgent\\start.cmd"'
         )
         try:
