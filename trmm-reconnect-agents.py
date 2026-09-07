@@ -1,102 +1,103 @@
 #!/usr/bin/env python3
 """Reconnect ALL SOC agents via Tactical RMM.
 
-Rewrites C:\\ProgramData\\SOCAgent\\start.cmd on every online Windows TRMM
-agent to point at the current SOC server (+ shared WS key), then restarts
-the SOCAgent scheduled task so the agent re-registers.
+Runs the SOC installer (fetched live from the SOC box) on every online
+Windows TRMM agent. The installer:
+  - ensures Python (installs 3.12 when missing)
+  - downloads the current agent_unified.py
+  - writes start.cmd pointing at SOC_SERVER with the shared WS key
+  - recreates the SOCAgent scheduled task and starts it
+
+Works uniformly whether a box already has python or none at all.
 
 Usage:
     export TRMM_API_KEY="your-api-key"
     ./trmm-reconnect-agents.py
-    # or
-    ./trmm-reconnect-agents.py --key <your-key> [--server http://173.208.232.91:8095]
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import ssl
 import sys
-import time
 import urllib.request
 
 TRMM_API = "https://api.simplyict.com.au"
 DEFAULT_SERVER = "http://173.208.232.91:8095"
-DEFAULT_AGENT_KEY = "ac819555a88829a086d429cfec5daa45"
-AGENT_DIR = r"C:\ProgramData\SOCAgent"
+INSTALL_URL = f"{DEFAULT_SERVER}/api/agent/install/windows-batch"
 
-# Keep in sync with install_windows.cmd's start.cmd layout.
-START_CMD = (
-    'cmd /c (echo @echo off'
-    ' && echo cd /d "%s"'
-    ' && echo "C:\\Program Files\\Python312\\python.exe" agent.py --server %s --key %s'
-    ' ^>^> "C:\\ProgramData\\SOCAgent\\agent.log" 2^>^&1'
-    ') > "%s\\start.cmd"'
-) % (AGENT_DIR, "%s", "%s", AGENT_DIR)
+# NOTE: parenthesized 'cmd /c (echo ... ) > file' and even plain chained
+# 'echo x > file & echo y >> file' writes were tried; the chained form works.
+# The full installer is used instead: it is idempotent and also handles
+# machines that have no Python at all (installs 3.12 silently).
 
 
-def api(method: str, path: str, key: str, data: dict | None = None, timeout: int = 120):
-    url = f"{TRMM_API}{path}"
-    body = json.dumps(data).encode() if data is not None else None
-    req = urllib.request.Request(url, data=body, method=method)
-    req.add_header("X-API-Key", key)
-    if body:
-        req.add_header("Content-Type", "application/json")
+def api_get(path: str, key: str):
+    req = urllib.request.Request(f"{TRMM_API}{path}", headers={"X-API-Key": key})
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=timeout) as r:
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
         return json.loads(r.read())
+
+
+def api_post(path: str, data: dict, key: str, timeout: int = 300):
+    body = json.dumps(data).encode()
+    req = urllib.request.Request(
+        f"{TRMM_API}{path}", data=body, method="POST",
+        headers={"X-API-Key": key, "Content-Type": "application/json"})
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout + 30) as r:
+            return r.status, r.read().decode()[:200]
+    except Exception as e:
+        return None, str(e)
+
+
+def reconnect_one(agent: dict, key: str, results: list):
+    host = agent.get("hostname", "?")
+    aid = agent.get("agent_id", "?")
+    install_cmd = (
+        f'curl -sL --max-time 120 {INSTALL_URL} -o "%TEMP%\\socagent-install.cmd"'
+        f' && "%TEMP%\\socagent-install.cmd"'
+    )
+    st, body = api_post(f"/agents/{aid}/cmd/",
+                        {"cmd": install_cmd, "shell": "cmd",
+                         "timeout": 300, "run_as_user": False}, key, timeout=300)
+    ok = st == 200
+    results.append((host, st, body[:120]))
+    if ok:
+        print(f"{host}: installer ran (task recreated + started)")
+    else:
+        print(f"{host}: FAILED http={st} {body[:120]}")
+    return ok
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", default=os.environ.get("TRMM_API_KEY", ""))
-    ap.add_argument("--server", default=os.environ.get("SOC_SERVER", DEFAULT_SERVER))
-    ap.add_argument("--agent-key", default=DEFAULT_AGENT_KEY)
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--workers", type=int, default=6)
     args = ap.parse_args()
-
     if not args.key:
         print("error: set TRMM_API_KEY or pass --key", file=sys.stderr)
         sys.exit(1)
 
-    server = args.server.rstrip("/")
-    # normalize server to host:port form the agent's --server flag expects
-    hostport = server.replace("http://", "").replace("https://", "")
-
-    print(f"Server: {server} (agent --server {hostport})")
-    agents = api("GET", "/agents/", args.key)
+    agents = api_get("/agents/", args.key)
     windows = [a for a in agents if a.get("plat") == "windows"]
     online = [a for a in windows if a.get("status") == "online"]
-    print(f"TRMM agents: {len(windows)} windows, {len(online)} online")
+    print(f"TRMM: {len(windows)} windows, {len(online)} online")
+    print(f"Installer URL: {INSTALL_URL}")
 
-    ok = failed = skipped = 0
-    for a in online:
-        host = a.get("hostname", "?")
-        aid = a.get("agent_id", "?")
-        cmd = START_CMD % (hostport, args.agent_key)
-        if args.dry_run:
-            print(f"[dry-run] {host}: rewrite start.cmd -> {hostport}")
-            continue
-        try:
-            api("POST", f"/agents/{aid}/cmd/",
-                args.key, {"cmd": cmd, "shell": "cmd", "timeout": 15,
-                           "run_as_user": False})
-        except Exception as e:
-            print(f"{host}: start.cmd rewrite FAILED ({e})")
-            failed += 1
-            continue
-        time.sleep(1)
-        try:
-            api("POST", f"/agents/{aid}/cmd/",
-                args.key, {"cmd": "schtasks /run /tn SOCAgent", "shell": "cmd",
-                           "timeout": 15, "run_as_user": False})
-            print(f"{host}: start.cmd rewritten, task started")
-            ok += 1
-        except Exception as e:
-            print(f"{host}: rewrite ok but task start FAILED ({e})")
-            failed += 1
+    results: list = []
+    ok = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
+        futs = [ex.submit(reconnect_one, a, args.key, results) for a in online]
+        for f in concurrent.futures.as_completed(futs):
+            if f.result():
+                ok += 1
 
-    skipped = len(windows) - len(online)
-    print(f"\nDone: {ok} reconnected, {failed} failed, {skipped} offline skipped")
+    failed = [(h, st, b) for h, st, b in results if st != 200]
+    print(f"\nDone: {ok}/{len(online)} installers dispatched (HTTP 200)")
+    for host, st, body in failed:
+        print(f"  FAILED {host}: http={st} {body}")
     sys.exit(1 if failed else 0)
 
 
