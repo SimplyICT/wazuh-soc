@@ -1,0 +1,12 @@
+[Unit]
+Description=Run SOC fleet maintenance every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15min
+AccuracySec=1min
+Persistent=true
+Unit=soc-fleet-maintenance.service
+
+[Install]
+WantedBy=timers.target

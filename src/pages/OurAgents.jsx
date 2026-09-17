@@ -34,7 +34,7 @@ export default function OurAgents() {
 
   const online = o.data?.agents || [];
   const all = a.data?.agents || [];
-  const latest = a.data?.agents?.[0]?.latest_version || all.find(x => x.latest_version)?.latest_version || '';
+  const latest = all.reduce((m, x) => (x.latest_version && x.latest_version > m ? x.latest_version : m), '');
   const pc = {}; all.forEach(x => { pc[x.platform] = (pc[x.platform] || 0) + 1; });
   const oc = online.length, ofc = all.filter(x => x.status !== 'online').length;
   const outdated = all.filter(x => x.needs_update);
@@ -62,7 +62,8 @@ export default function OurAgents() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
-      toast(`${label}: ${d.updated} agents, ${d.failed} failed`, d.failed > 0 ? 'error' : 'success');
+      toast(`${label}: ${d.updated} agents, ${d.failed} failed${d.skipped ? `, ${d.skipped} already current` : ''}`,
+        d.failed > 0 ? 'error' : 'success');
       setSelected(new Set());
       a.refetch();
     } catch (e) { toast('Update failed', 'error'); }
@@ -75,15 +76,13 @@ export default function OurAgents() {
     pushUpdate({agent_ids: ids}, 'Update sent');
   };
 
-  // What the UI knows about an agent's last update attempt. A request newer than
-  // the last report means the agent is still working on it.
-  const ts = (s) => (s ? Date.parse(s) || 0 : 0);
+  // The server decides the state (it knows whether the agent is still behind and
+  // whether the request went stale), so a no-op push cannot spin forever.
   const updateChip = (x) => {
     const u = x.update || {};
-    const requested = ts(x.update_requested_at), reported = ts(u.at);
-    if (requested && requested > reported) return <span className="badge badge-amber badge-xs">updating…</span>;
-    if (u.success === true) return <span className="badge badge-green badge-xs" title={`${u.from} → ${u.to}`}>updated {u.to}</span>;
-    if (u.success === false) return <span className="badge badge-red badge-xs" title={u.error || 'failed'}>update failed</span>;
+    if (x.update_state === 'updating') return <span className="badge badge-amber badge-xs">updating…</span>;
+    if (x.update_state === 'updated') return <span className="badge badge-green badge-xs" title={`${u.from} → ${u.to}`}>updated {u.to}</span>;
+    if (x.update_state === 'failed') return <span className="badge badge-red badge-xs" title={u.error || 'failed'}>update failed</span>;
     return null;
   };
 
@@ -168,7 +167,7 @@ export default function OurAgents() {
                     <td><span className={`badge ${x.status === 'online' ? 'badge-green' : 'badge-gray'}`}>{x.status}</span></td>
                     <td className="text-sm text-secondary">{fd(x.last_seen)}</td>
                     <td>
-                      {x.needs_update && x.status === 'online' && (
+                      {x.needs_update && (
                         <button className="btn btn-xs" disabled={updating}
                           onClick={e => { e.stopPropagation(); pushUpdate({agent_ids: [x.id]}, `Updating ${x.hostname}`); }}>
                           Update

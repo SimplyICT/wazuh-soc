@@ -1,0 +1,17 @@
+[Unit]
+Description=SOC fleet maintenance — converge agent versions + retire Wazuh
+Documentation=file:/sdb-disk/dev/projects/wazuh-soc/SOC-AGENT-DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aiagent
+WorkingDirectory=/sdb-disk/dev/projects/wazuh-soc
+EnvironmentFile=/home/aiagent/.config/soc/fleet.env
+ExecStart=/sdb-disk/dev/projects/wazuh-soc/soc-fleet-maintenance.sh
+TimeoutStartSec=3600
+Nice=10
+# journald keeps the per-run output; no file logging needed.
+StandardOutput=journal
+StandardError=journal

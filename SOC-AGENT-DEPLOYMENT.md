@@ -195,3 +195,32 @@ Known state 2026-09-17: `.183` removed and verified; `.84`/`.185` already clean;
 `.193` still runs `wazuh-agent.service` (needs root — sudo there asks for a password).
 Windows: 23 of 30 online hosts had the agent (service + MSI + install dir) — removal is
 dispatched from the same tool.
+
+### Scheduled maintenance (installed 2026-09-17)
+
+`soc-fleet-maintenance.timer` runs `soc-fleet-maintenance.sh` 15 minutes after the
+previous run finishes (and 5 min after boot):
+
+1. `trmm-converge-agents.py` — push the published build to whoever is online and behind
+2. `wazuh-remove-win.py` — retire Wazuh/OSSEC on every online Windows host
+
+Machines that come online later are picked up on the next tick, which is the point of
+the timer. Both steps are idempotent and print per-host results to the journal
+(`journalctl -u soc-fleet-maintenance`).
+
+- units: `soc-fleet-maintenance.{service,timer}` (copied to `/etc/systemd/system/`)
+- secrets: `/home/aiagent/.config/soc/fleet.env` (mode 600) holds `TRMM_API_KEY` and
+  `SOC_AGENT_BASE`
+- `SOC_AGENT_BASE` is the address agents fetch artifacts from. Update pushes always use
+  it — never the operator's request Host, because the dashboard is browsed through the
+  Cloudflare domain and agents pointed there receive the Access login page instead of
+  the artifact.
+
+### Update state shown in the dashboard
+
+The agents API reports `update_state` (`updating` / `updated` / `failed` / empty) computed
+server-side: a request goes stale as soon as the agent reports the published version, an
+`updating` chip only shows while the agent is still behind and the request is under 30 min
+old, `updated` shows for 2 h, `failed` for 24 h. A push to an agent that is already current
+is skipped (and its pending marker cleared) instead of queueing a no-op command that left
+the row spinning forever.
