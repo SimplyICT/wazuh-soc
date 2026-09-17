@@ -110,3 +110,52 @@ latest_version, update, update_requested_at) and the Agents page chips
 **Gotcha for future edits:** every `@handler(...)` must be defined *above* the
 `if __name__ == "__main__": main()` block at the end of `agent_unified.py`.
 Handlers below it never register when the agent runs as a script.
+
+---
+
+## Packaged agent (.exe) — no Python on the target (roadmap P1.2)
+
+**Build** (any Windows box with Python; the SOC's own admin machine is fine):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build_windows_exe.ps1 -Server 173.208.232.91:8095
+```
+
+It downloads the current agent, stamps the build with the agent's `AGENT_VERSION`,
+runs PyInstaller onefile, then uploads `SOCAgent.exe` + its version/sha256 sidecar to
+`POST /api/agent/upload-exe`. The script is served at
+`/api/agent/build-exe-script`.
+
+**Install** (admin, on a machine without Python):
+
+```
+cmd /c "curl -o install-exe.cmd http://173.208.232.91:8095/api/agent/install/windows-exe && install-exe.cmd"
+```
+
+`install_windows_exe.cmd` stops any existing agent (task, `SOCAgent.exe`, and a legacy
+`python.exe … SOCAgent …` process), downloads the exe, writes `start.cmd` running
+`SOCAgent.exe --server … --key …`, recreates the `SOCAgent` scheduled task and starts it.
+
+**Updates for packaged agents.** A frozen build reports `"build": "exe"`, so the
+registration ack hands it `/api/agent/download/exe` + the exe's version and sha256
+(the server keeps the exe's version in `SOCAgent.exe.meta.json`, since a binary cannot
+be parsed for it). On update the agent downloads the new exe, verifies the sha256,
+requires a strictly newer version from the server, stages it as `SOCAgent.new.exe` and
+spawns a detached `soc-agent-update.cmd` that waits for the agent to exit, moves the
+running exe aside, puts the new one in place and relaunches it with the original
+arguments. A failed download/verification leaves the running exe untouched.
+
+**Version skew is expected and safe:** script agents compare against
+`agent_unified.py`'s version, packaged agents against the uploaded exe's version, so
+the two artifacts can be released independently.
+
+**Operational notes learned building the exe (2026-09-17):**
+
+- Build with a **long timeout**: dispatched over TRMM/RMM the build takes 3-5 min and the
+  caller can be cut off before the upload step — the script now uploads with `curl.exe`
+  and keeps the build if the upload fails (path printed, one-line manual upload).
+- Do not build inside a `*-build` directory (PyInstaller refuses); the script uses
+  `%ProgramData%\socagent-exe`.
+- The `.ps1` must be pure ASCII — PowerShell 5.1 mis-parses UTF-8 punctuation.
+- A `SOCAgent.1.x.y.exe.bak` next to the agent means a packaged self-update completed;
+  `soc-agent-update.log` records each swap attempt.

@@ -63,13 +63,42 @@ def reconnect_one(agent: dict, key: str, results: list):
     st, body = api_post(f"/agents/{aid}/cmd/",
                         {"cmd": install_cmd, "shell": "cmd",
                          "timeout": 300, "run_as_user": False}, key, timeout=300)
-    ok = st == 200
-    results.append((host, st, body[:120]))
-    if ok:
+    if st == 200:
+        outcome = "ran"
+    elif st is None and ("502" in body or "504" in body or "timed out" in body.lower()):
+        # TRMM's gateway gave up waiting; the job itself keeps running on the
+        # machine (verified in the SOC afterwards — see verify()).
+        outcome = "dispatched"
+    else:
+        outcome = "failed"
+    results.append((host, outcome, body[:120]))
+    if outcome == "ran":
         print(f"{host}: installer ran (task recreated + started)")
+    elif outcome == "dispatched":
+        print(f"{host}: dispatched — TRMM timed out waiting, verify in the SOC")
     else:
         print(f"{host}: FAILED http={st} {body[:120]}")
-    return ok
+    return outcome
+
+
+def verify(results: list, telemetry: str, wait: int):
+    """Report what the SOC sees for the targeted hosts after the dust settles."""
+    import time as _time
+    if wait:
+        print(f"\nWaiting {wait}s before verifying in the SOC...")
+        _time.sleep(wait)
+    try:
+        with open(telemetry) as f:
+            tel = json.load(f)
+    except Exception as e:
+        print(f"verify: cannot read {telemetry}: {e}")
+        return
+    print("\nSOC view of the targeted hosts:")
+    for host, outcome, _ in sorted(results):
+        entry = tel.get(f"windows-{host}") or {}
+        system = (entry.get("data") or {}).get("system") or {}
+        print(f"  {host:<28} v{system.get('agent_version', '?'):<7} "
+              f"{(entry.get('data') or {}).get('status', '?'):<8} dispatch={outcome}")
 
 
 def main():
@@ -80,6 +109,12 @@ def main():
                     help="limit to these hosts (exact name, glob or substring; repeatable)")
     ap.add_argument("--dry-run", action="store_true",
                     help="list the agents that would be targeted and exit")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="skip the post-sweep SOC version check")
+    ap.add_argument("--verify-wait", type=int, default=120,
+                    help="seconds to wait before the SOC version check (default 120)")
+    ap.add_argument("--telemetry", default="/home/aiagent/mission-control-ui/agent_telemetry.json",
+                    help="SOC telemetry file used by the version check")
     args = ap.parse_args()
     if not args.key:
         print("error: set TRMM_API_KEY or pass --key", file=sys.stderr)
@@ -108,17 +143,22 @@ def main():
         return
 
     results: list = []
-    ok = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = [ex.submit(reconnect_one, a, args.key, results) for a in targets]
         for f in concurrent.futures.as_completed(futs):
-            if f.result():
-                ok += 1
+            f.result()
 
-    failed = [(h, st, b) for h, st, b in results if st != 200]
-    print(f"\nDone: {ok}/{len(targets)} installers dispatched (HTTP 200)")
-    for host, st, body in failed:
-        print(f"  FAILED {host}: http={st} {body}")
+    ran = [r for r in results if r[1] == "ran"]
+    dispatched = [r for r in results if r[1] == "dispatched"]
+    failed = [r for r in results if r[1] == "failed"]
+    print(f"\nDispatched: {len(ran)} ran, {len(dispatched)} timed out at the TRMM gateway "
+          f"(still running on the machine), {len(failed)} failed")
+    for host, _, body in failed:
+        print(f"  FAILED {host}: {body}")
+
+    if not args.no_verify and not args.dry_run and results:
+        verify(results, args.telemetry, args.verify_wait)
+
     sys.exit(1 if failed else 0)
 
 
