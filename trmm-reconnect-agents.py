@@ -16,6 +16,7 @@ Usage:
 """
 import argparse
 import concurrent.futures
+import fnmatch
 import json
 import os
 import ssl
@@ -75,6 +76,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", default=os.environ.get("TRMM_API_KEY", ""))
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--host", action="append", default=[],
+                    help="limit to these hosts (exact name, glob or substring; repeatable)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="list the agents that would be targeted and exit")
     args = ap.parse_args()
     if not args.key:
         print("error: set TRMM_API_KEY or pass --key", file=sys.stderr)
@@ -83,19 +88,35 @@ def main():
     agents = api_get("/agents/", args.key)
     windows = [a for a in agents if a.get("plat") == "windows"]
     online = [a for a in windows if a.get("status") == "online"]
-    print(f"TRMM: {len(windows)} windows, {len(online)} online")
+    targets = online
+    if args.host:
+        pats = [h.strip().lower() for h in args.host]
+
+        def matches(name):
+            low = name.lower()
+            return any(fnmatch.fnmatch(low, p) or p in low for p in pats)
+
+        targets = [a for a in online if matches(a.get("hostname", ""))]
+        print(f"--host filter -> {len(targets)} target(s): "
+              f"{', '.join(a.get('hostname', '?') for a in targets) or 'none'}")
+
+    print(f"TRMM: {len(windows)} windows, {len(online)} online, {len(targets)} targeted")
     print(f"Installer URL: {INSTALL_URL}")
+    if args.dry_run:
+        for a in targets:
+            print(f"  would install: {a.get('hostname')}")
+        return
 
     results: list = []
     ok = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(reconnect_one, a, args.key, results) for a in online]
+        futs = [ex.submit(reconnect_one, a, args.key, results) for a in targets]
         for f in concurrent.futures.as_completed(futs):
             if f.result():
                 ok += 1
 
     failed = [(h, st, b) for h, st, b in results if st != 200]
-    print(f"\nDone: {ok}/{len(online)} installers dispatched (HTTP 200)")
+    print(f"\nDone: {ok}/{len(targets)} installers dispatched (HTTP 200)")
     for host, st, body in failed:
         print(f"  FAILED {host}: http={st} {body}")
     sys.exit(1 if failed else 0)

@@ -89,12 +89,18 @@ command, or the poll hint for agents without a WebSocket): download → sha256 c
 server → re-exec. One attempt per process; any failure leaves the running agent
 untouched, and `~/.soc-agent-update.json` holds the last outcome.
 
-**One-time catch-up for agents below 1.1.1.** Agents running the old code cannot
-self-update — their update handlers were registered after the `__main__` guard
-(never loaded) and the on-connect check raised `NameError`. Push the installer
-once — Windows: `cmd /c "curl -o install.cmd http://173.208.232.91:8095/api/agent/install/windows-batch && install.cmd"`
-(or the TRMM sweep `trmm-reconnect-agents.py`), Linux: `curl -s http://173.208.232.91:8095/api/edr/install | sudo bash`.
-From 1.1.1 onward updates are automatic.
+**One-time catch-up for the currently deployed agents (all 1.1.0).** Agents running
+the old code cannot self-update — their update handlers were registered after the
+`__main__` guard (never loaded) and the on-connect check raised `NameError`. So the
+first hop needs an installer push:
+
+- Windows, one host: `cmd /c "curl -o install.cmd http://173.208.232.91:8095/api/agent/install/windows-batch && install.cmd"`
+- Windows, fleet (TRMM): `TRMM_API_KEY=... ./trmm-reconnect-agents.py`
+  (`--dry-run` lists targets, `--host NAME` limits the sweep to a canary)
+- Linux: `curl -s http://173.208.232.91:8095/api/edr/install | sudo bash`
+
+From 1.1.1/1.1.2 onward updates are automatic — verified in production on
+DESKTOP-37759RK (installer 1.1.0 → 1.1.1, then pushed self_update 1.1.1 → 1.1.2).
 
 **Where to look when an agent does not update.** `/api/agents/all` (needs_update,
 latest_version, update, update_requested_at) and the Agents page chips
