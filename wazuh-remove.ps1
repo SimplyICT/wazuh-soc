@@ -33,13 +33,16 @@ foreach ($p in $products) {
   }
 }
 if (-not $products) {
-  # No MSI entry: fall back to WMIC for any product the registry missed.
-  $wmi = & wmic product where "name like 'Wazuh%%'" get IdentifyingNumber /value 2>$null
-  foreach ($line in $wmi) {
-    if ($line -match "IdentifyingNumber=(.+)") {
-      & msiexec.exe /x $matches[1].Trim() /qn /norestart | Out-Null
-      $report += "wmic-msi"
-    }
+  # No MSI entry in the Uninstall keys: ask the installer service for products
+  # whose display name mentions Wazuh (WMIC is gone on current Windows 11).
+  $msi = @()
+  try {
+    $msi = Get-WmiObject -Class Win32_Product -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -like "*Wazuh*" -or $_.Name -like "*OSSEC*" }
+  } catch { $msi = @() }
+  foreach ($m in $msi) {
+    & msiexec.exe /x $m.IdentifyingNumber /qn /norestart | Out-Null
+    $report += "msi:$($m.Name)"
   }
 }
 
@@ -67,9 +70,13 @@ foreach ($svc in @("WazuhSvc", "OssecSvc", "Wazuh")) {
 foreach ($dir in @("C:\Program Files (x86)\ossec-agent", "C:\Program Files\ossec-agent")) {
   if (Test-Path $dir) { $left += "dir:$dir" }
 }
+# A leftover MSI registry entry with no service and no files is a stale key that
+# clears on the next reboot - report it as a note, not as a failed removal.
 $still = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
          Where-Object { $_.DisplayName -like "*Wazuh*" -or $_.DisplayName -like "*OSSEC*" }
-if ($still) { $left += "msi" }
+if ($still) {
+  if ($left.Count -eq 0) { $report += "stale-msi-entry(clears-on-reboot)" } else { $left += "msi" }
+}
 
 if ($left.Count -eq 0) {
   if ($report.Count -eq 0) { "CLEAN (nothing to remove)" } else { "REMOVED " + ($report -join " ") }

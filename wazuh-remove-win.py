@@ -63,12 +63,38 @@ def trmm_cmd(agent_id: str, cmd: str, key: str, timeout: int = 600):
         return f"ERROR {str(e)[:80]}"
 
 
+REMOVE_CMD = ('curl.exe -sSL http://173.208.232.91:8095/api/agent/tools/wazuh-remove.ps1 '
+              '-o "%TEMP%\\wazuh-remove.ps1" && '
+              'powershell -ExecutionPolicy Bypass -NoProfile -File "%TEMP%\\wazuh-remove.ps1"')
+
+
+def embedded_remove_cmd() -> str:
+    """Fallback for hosts that cannot fetch the script: ship it inline.
+
+    Base64 of the UTF-8 text (not UTF-16LE) keeps the command line inside the
+    ~8k limit, then PowerShell decodes it to a file and runs it.
+    """
+    import base64 as _b64
+    raw = SCRIPT.read_text(encoding="utf-8")
+    b64 = _b64.b64encode(raw.encode("utf-8")).decode()
+    ps = ("$p=Join-Path $env:TEMP 'wazuh-remove.ps1'; "
+          f"[IO.File]::WriteAllText($p,[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64}'))); "
+          "& powershell -ExecutionPolicy Bypass -NoProfile -File $p")
+    return f'powershell -NoProfile -Command "{ps}"'
+
+
 def one(a: dict, key: str, payload: str | None) -> tuple:
     host = a.get("hostname", "?")
     if payload is None:
         out = trmm_cmd(a["agent_id"], DETECT, key, timeout=120)
-    else:
-        out = trmm_cmd(a["agent_id"], f"powershell -NoProfile -EncodedCommand {payload}", key)
+        return host, a.get("client_name", ""), out
+    out = trmm_cmd(a["agent_id"], REMOVE_CMD, key, timeout=600)
+    if "curl:" in out or "Could not connect" in out or out.strip() == "":
+        # Machine cannot reach the SOC (filtered egress, agent box down): ship the
+        # script inline instead. The command line stays just under the 8k limit.
+        out2 = trmm_cmd(a["agent_id"], embedded_remove_cmd(), key, timeout=600)
+        out = out2 if out2.strip() else f"FALLBACK-FAILED {out[:60]}"
+        out = f"{out} (embedded fallback)"
     return host, a.get("client_name", ""), out
 
 
@@ -96,7 +122,7 @@ def main() -> int:
             return any(fnmatch.fnmatch(low, p) or p in low for p in pats)
         agents = [a for a in agents if matches(a.get("hostname", ""))]
 
-    payload = None if args.detect else encoded_remover()
+    payload = None if args.detect else REMOVE_CMD
     print(f"{'detect on' if args.detect else 'removing from'} {len(agents)} windows agents", flush=True)
 
     rows = []
