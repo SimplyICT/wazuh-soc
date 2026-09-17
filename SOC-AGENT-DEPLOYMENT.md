@@ -224,3 +224,43 @@ server-side: a request goes stale as soon as the agent reports the published ver
 old, `updated` shows for 2 h, `failed` for 24 h. A push to an agent that is already current
 is skipped (and its pending marker cleared) instead of queueing a no-op command that left
 the row spinning forever.
+
+---
+
+## M365 / Defender monitoring (multi-tenant)
+
+**What runs today.** `itdr_poller.py` polls Microsoft Graph per tenant every
+`ITDR_POLL_INTERVAL_MIN` (default 5 min) and turns hits into cases:
+
+| Area | Endpoint | State |
+|---|---|---|
+| Sign-ins | `auditLogs/signIns` | live (520 events stored) |
+| Directory audit | `auditLogs/directoryAudits` | live |
+| Entra risk | `identityProtection/riskDetections`, `riskyUsers` | live |
+| **Defender XDR** | `security/alerts_v2`, `security/incidents` | code ready, **roles not granted** (Graph 403) |
+
+**Onboarding a tenant** — ITDR page → Tenants → *+ Tenant*: name, directory
+(tenant) ID, application (client) ID, client secret. Credentials are written to
+`itdr_tenant_creds.json` (mode 600) and take effect immediately (no restart); the
+env-var route (`ITDR_<PREFIX>_TENANT_ID/_CLIENT_ID/_CLIENT_SECRET`) still wins if
+set. *Test* on a row re-probes Graph and reports the outcome per area.
+
+**App registration, per customer tenant** (Entra ID → App registrations → the app →
+API permissions → Microsoft Graph → *Application* permissions):
+
+- `AuditLog.Read.All`, `IdentityRiskEvent.Read.All`, `Directory.Read.All` — identity
+- `SecurityAlert.Read.All`, `SecurityIncident.Read.All` — Defender threat pickup
+
+Then **Grant admin consent**. Until that is done the tenant shows
+`Identity: ok · Defender: not granted` and identity polling continues normally;
+`security/incidents` and `security/alerts_v2` answer 403 *"Missing application
+roles"* (which the poller treats as a status, never an error).
+
+For MSP-style estate-wide access (one app, many customer tenants) use GDAP /
+delegated admin relationships, or make the app multi-tenant and have each
+customer admin consent once at
+`https://login.microsoftonline.com/<tenant-id>/adminconsent?client_id=<client-id>`.
+
+**API:** `GET /api/itdr/tenants?health=true` (per-tenant probe),
+`GET /api/itdr/tenants/{id}/health`, `POST /api/itdr/tenants` (name + credentials),
+`POST /api/itdr/tenants/{id}/credentials`, `POST /api/itdr/poll[/{tenant_id}]`.

@@ -22,6 +22,9 @@ export default function Itdr() {
   const toast = useToast();
   const [tenantFilter, setTenantFilter] = useState('');
   const [polling, setPolling] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name: '', tenant_id: '', client_id: '', client_secret: '', env_prefix: '' });
 
   const r = useApi(() => fetch('/api/itdr/summary').then(r => r.json()), []);
   const eventsR = useApi(
@@ -57,6 +60,62 @@ export default function Itdr() {
     } finally {
       setPolling(false);
     }
+  };
+
+  const testConnection = async (id) => {
+    setBusy(`test:${id}`);
+    try {
+      const res = await fetch(`/api/itdr/tenants/${encodeURIComponent(id)}/health`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'health check failed');
+      const perms = data.permissions || {};
+      const msg = `Identity: ${perms.identity || '?'} · Defender: ${perms.defender || '?'}` +
+        (perms.defender === 'missing_roles' ? ` (grant ${(perms.defender_missing_roles || []).join(', ')})` : '');
+      toast(`${id}: ${msg}`, perms.identity === 'ok' ? 'success' : 'error');
+      r.refetch();
+    } catch (e) { toast(`Connection test failed: ${e.message}`, 'error'); }
+    setBusy('');
+  };
+
+  // Onboarding: register the tenant and hand over its app-registration
+  // credentials in one step (stored server-side, never returned to the browser).
+  const addTenant = async () => {
+    if (!form.name.trim()) { toast('Tenant name is required', 'error'); return; }
+    const hasCreds = form.client_id.trim() && form.client_secret.trim();
+    if (hasCreds && !form.tenant_id.trim()) { toast('Tenant ID (directory GUID) is required with credentials', 'error'); return; }
+    setBusy('add');
+    try {
+      const res = await fetch('/api/itdr/tenants', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name.trim(), tenant_id: form.tenant_id.trim(),
+          env_prefix: form.env_prefix.trim(), org_id: 'default',
+          client_id: form.client_id.trim(), client_secret: form.client_secret.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'could not create tenant');
+      const perms = data.tenant?.permissions;
+      toast(perms
+        ? `Tenant added — Identity: ${perms.identity}, Defender: ${perms.defender}${perms.defender === 'missing_roles' ? ` (grant ${(perms.defender_missing_roles || []).join(', ')})` : ''}`
+        : 'Tenant added — set credentials to start polling', 'success');
+      setForm({ name: '', tenant_id: '', client_id: '', client_secret: '', env_prefix: '' });
+      setAdding(false);
+      r.refetch();
+    } catch (e) { toast(`Add tenant failed: ${e.message}`, 'error'); }
+    setBusy('');
+  };
+
+  const pollOne = async (id) => {
+    setBusy(`poll:${id}`);
+    try {
+      const res = await fetch(`/api/itdr/poll/${encodeURIComponent(id)}`, { method: 'POST' });
+      const data = await res.json();
+      toast(`${id}: ${data.status || 'polled'}${data.defender ? ` · Defender: ${data.defender}` : ''}`,
+        data.status === 'ok' ? 'success' : 'info');
+      r.refetch();
+    } catch (e) { toast(`Poll failed: ${e.message}`, 'error'); }
+    setBusy('');
   };
 
   return (
@@ -98,7 +157,7 @@ export default function Itdr() {
             <div className="card-title text-red">&#9888; M365 Not Configured</div>
           </div>
           <div className="text-md text-secondary" style={{ lineHeight: 1.7 }}>
-            <p>Register each managed tenant in <b>Organizations</b> (M365 Tenants tab), then set credentials on the SOC server. Per tenant, the env prefix from registration is used:</p>
+            <p>Add each managed tenant on the <b>Tenants</b> tab (name + directory ID + app client id/secret) — credentials are stored server-side (mode 600). The env-var route still works and takes precedence:</p>
             <pre className="code-block" style={{ marginTop: 8 }}>
 # for a tenant registered with env prefix "SIMPLYICT" or id "simplyict"
 ITDR_SIMPLYICT_TENANT_ID=your-tenant-guid
@@ -109,6 +168,8 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
               <li><code>AuditLog.Read.All</code> — sign-in + audit logs</li>
               <li><code>IdentityRiskEvent.Read.All</code> — risk detections</li>
               <li><code>Directory.Read.All</code> — user/role data</li>
+              <li><code>SecurityAlert.Read.All</code> — Defender XDR alerts (threat pickup)</li>
+              <li><code>SecurityIncident.Read.All</code> — Defender XDR incidents</li>
             </ul>
             <p style={{ marginTop: 8 }}>
               <button className="btn btn-sm" onClick={handlePoll} disabled={polling}>
@@ -137,9 +198,10 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
           {tenants.length === 0 ? (
             <div className="empty-state">No tenants registered. Add them in Organizations &rarr; M365 Tenants.</div>
           ) : (
+            <>
             <table>
               <thead><tr>
-                <th>Tenant</th><th>Status</th><th>Last Poll</th><th>Events</th><th>Cases</th><th>Org</th>
+                <th>Tenant</th><th>Polling</th><th>Identity</th><th>Defender</th><th>Last Poll</th><th>Events</th><th>Actions</th>
               </tr></thead>
               <tbody>
                 {tenants.map(t => (
@@ -153,21 +215,89 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
                         !t.enabled ? 'badge-gray' :
                         !t.configured ? 'badge-amber' :
                         t.last_status === 'ok' ? 'badge-green' :
-                        t.last_status === 'not_configured' ? 'badge-amber' :
                         t.last_status === 'error' ? 'badge-red' :
                         'badge-gray'
-                      }`}>
+                      }`} title={t.last_error || ''}>
                         {!t.enabled ? 'disabled' : !t.configured ? 'no creds' : t.last_status || 'never polled'}
                       </span>
                     </td>
-                    <td className="text-sm">{formatDate(t.last_poll)}</td>
-                    <td><span className="badge badge-accent">{t.event_count}</span></td>
-                    <td><span className="badge badge-gray">{t.case_count}</span></td>
-                    <td className="text-sm">{t.org_id}</td>
+                    <td>
+                      <span className={`badge ${
+                        t.identity === 'ok' ? 'badge-green' :
+                        t.identity === 'missing_roles' ? 'badge-red' :
+                        t.identity ? 'badge-amber' : 'badge-gray'
+                      }`}>{t.identity || '?'}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${
+                        t.defender === 'ok' ? 'badge-green' :
+                        t.defender === 'missing_roles' ? 'badge-amber' :
+                        t.defender ? 'badge-gray' : 'badge-gray'
+                      }`} title={t.defender === 'missing_roles' ? `grant + consent: ${(t.defender_missing_roles || []).join(', ')}` : ''}>
+                        {t.defender === 'missing_roles' ? 'not granted' : (t.defender || '?')}
+                      </span>
+                    </td>
+                    <td className="text-sm">
+                      {formatDate(t.last_poll)}
+                      {t.last_counts && (
+                        <div className="text-xs text-secondary">
+                          {(t.last_counts.defender_alerts || 0)} dfe alerts · {(t.last_counts.audit_logs || 0)} audits
+                        </div>
+                      )}
+                    </td>
+                    <td><span className="badge badge-accent">{t.event_count || 0}</span></td>
+                    <td>
+                      <div className="flex gap-6">
+                        <button className="btn btn-xs" disabled={busy === `test:${t.id}`}
+                          onClick={() => testConnection(t.id)}>
+                          {busy === `test:${t.id}` ? '...' : 'Test'}
+                        </button>
+                        <button className="btn btn-xs" disabled={busy === `poll:${t.id}` || !t.configured}
+                          onClick={() => pollOne(t.id)}>
+                          {busy === `poll:${t.id}` ? '...' : 'Poll'}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {tenants.some(t => t.defender === 'missing_roles') && (
+              <div className="text-sm text-secondary" style={{ padding: '10px 14px' }}>
+                <span>Defender alerts require the application permissions </span>
+                <code>SecurityAlert.Read.All</code>
+                <span> and </span>
+                <code>SecurityIncident.Read.All</code>
+                <span> with admin consent in that tenant. Identity polling keeps working without them.</span>
+              </div>
+            )}
+            <div className="card-header" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="card-title">Add M365 tenant</div>
+              <button className="btn btn-sm" onClick={() => setAdding(!adding)}>{adding ? 'Cancel' : '+ Tenant'}</button>
+            </div>
+            {adding && (
+              <div style={{ padding: '0 14px 14px' }}>
+                <div className="text-sm text-secondary" style={{ marginBottom: 8 }}>
+                  Register the customer tenant and (optionally) its app registration in one step.
+                  The app needs <code>AuditLog.Read.All</code>, <code>IdentityRiskEvent.Read.All</code>,
+                  <code>Directory.Read.All</code> and — for Defender threat pickup —
+                  <code>SecurityAlert.Read.All</code> + <code>SecurityIncident.Read.All</code>, with admin
+                  consent granted in that tenant.
+                </div>
+                {[['name', 'Display name (e.g. Currimundi Vet)'], ['tenant_id', 'Directory (tenant) ID GUID'],
+                  ['client_id', 'Application (client) ID'], ['client_secret', 'Client secret'],
+                  ['env_prefix', 'Env prefix (optional, e.g. CURRIMUNDI)']].map(([field, label]) => (
+                  <input key={field} value={form[field]} placeholder={label}
+                    type={field === 'client_secret' ? 'password' : 'text'}
+                    onChange={e => setForm({ ...form, [field]: e.target.value })}
+                    style={{ display: 'block', width: '100%', maxWidth: 460, marginBottom: 6, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 10px', borderRadius: 'var(--radius-sm)', fontSize: 13 }} />
+                ))}
+                <button className="btn btn-sm btn-primary" disabled={busy === 'add'} onClick={addTenant}>
+                  {busy === 'add' ? 'Adding...' : 'Add tenant'}
+                </button>
+              </div>
+            )}
+            </>
           )}
         </div>
       )}
