@@ -1,7 +1,14 @@
 # SOC Platform — Remaining Roadmap
 
+## Shipped
+- **Agent auto-update (P1.1)** — 2026-09-17. Agents check the published version on
+  connect (and via pushed `self_update` / poll), download `/api/agent/download/agent`,
+  verify sha256 + version, replace atomically with a `.bak`, report back and restart.
+  Version is derived from `agent_unified.py`. Agents below 1.1.1 need one installer
+  push before auto-update takes over — see `SOC-AGENT-DEPLOYMENT.md`.
+
 ## P1 — Next Build
-1. **Agent auto-update polish** — fix chicken-and-egg: agents check version on connect, auto-download if outdated
+1. ~~**Agent auto-update polish**~~ — shipped 2026-09-17 (see above)
 2. **Windows agent .exe** — PyInstaller compile to standalone exe (no Python install needed)
 
 ## P2 — Future

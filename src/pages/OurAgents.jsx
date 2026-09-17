@@ -34,8 +34,10 @@ export default function OurAgents() {
 
   const online = o.data?.agents || [];
   const all = a.data?.agents || [];
+  const latest = a.data?.agents?.[0]?.latest_version || all.find(x => x.latest_version)?.latest_version || '';
   const pc = {}; all.forEach(x => { pc[x.platform] = (pc[x.platform] || 0) + 1; });
-  const oc = online.length, ofc = all.length - oc;
+  const oc = online.length, ofc = all.filter(x => x.status !== 'online').length;
+  const outdated = all.filter(x => x.needs_update);
   const fl = f === 'all' ? all : f === 'online' ? online : all.filter(x => x.status === 'offline');
 
   const toggleSelect = (id) => {
@@ -51,21 +53,38 @@ export default function OurAgents() {
     setSelected(new Set(fl.map(x => x.id)));
   };
 
-  const handleUpdate = async () => {
-    const ids = [...selected];
-    if (ids.length === 0) { toast('No agents selected', 'info'); return; }
+  const pushUpdate = async (body, label) => {
     setUpdating(true);
     try {
       const res = await fetch('/api/agents/update', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({agent_ids: ids}),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
-      toast(`Update sent: ${d.updated} agents, ${d.failed} failed`, d.failed > 0 ? 'error' : 'success');
+      toast(`${label}: ${d.updated} agents, ${d.failed} failed`, d.failed > 0 ? 'error' : 'success');
       setSelected(new Set());
+      a.refetch();
     } catch (e) { toast('Update failed', 'error'); }
     setUpdating(false);
+  };
+
+  const handleUpdate = () => {
+    const ids = [...selected];
+    if (ids.length === 0) { toast('No agents selected', 'info'); return; }
+    pushUpdate({agent_ids: ids}, 'Update sent');
+  };
+
+  // What the UI knows about an agent's last update attempt. A request newer than
+  // the last report means the agent is still working on it.
+  const ts = (s) => (s ? Date.parse(s) || 0 : 0);
+  const updateChip = (x) => {
+    const u = x.update || {};
+    const requested = ts(x.update_requested_at), reported = ts(u.at);
+    if (requested && requested > reported) return <span className="badge badge-amber badge-xs">updating…</span>;
+    if (u.success === true) return <span className="badge badge-green badge-xs" title={`${u.from} → ${u.to}`}>updated {u.to}</span>;
+    if (u.success === false) return <span className="badge badge-red badge-xs" title={u.error || 'failed'}>update failed</span>;
+    return null;
   };
 
   return (
@@ -74,6 +93,7 @@ export default function OurAgents() {
         <KpiCard value={all.length} label="Total" color="accent" />
         <KpiCard value={oc} label="Online" color="green" />
         <KpiCard value={ofc} label="Offline" color="red" />
+        <KpiCard value={outdated.length} label={latest ? `Outdated (v${latest})` : 'Outdated'} color={outdated.length ? 'amber' : 'green'} />
         {Object.entries(pc).map(([p, c]) => <KpiCard key={p} value={c} label={p} color="accent" sub={pi(p)} />)}
       </div>
 
@@ -106,6 +126,12 @@ export default function OurAgents() {
                 {updating ? 'Updating...' : `Update (${selected.size})`}
               </button>
             )}
+            {outdated.length > 0 && (
+              <button className="btn btn-sm" disabled={updating}
+                onClick={() => pushUpdate({outdated: true}, 'Updating outdated')}>
+                Update outdated ({outdated.length})
+              </button>
+            )}
             <div className="filter-tabs" style={{ margin: 0 }}>
               <span className={`filter-tab ${f === 'all' ? 'active' : ''}`} onClick={() => sf('all')}>All</span>
               <span className={`filter-tab ${f === 'online' ? 'active' : ''}`} onClick={() => sf('online')}>Online ({oc})</span>
@@ -120,7 +146,7 @@ export default function OurAgents() {
             <table>
               <thead><tr className="th-sticky">
                 <th style={{ width: 30 }}></th>
-                <th>Platform</th><th>Hostname</th><th>Version</th><th>Status</th><th>Last Seen</th>
+                <th>Platform</th><th>Hostname</th><th>Version</th><th>Status</th><th>Last Seen</th><th>Update</th>
               </tr></thead>
               <tbody>
                 {fl.map((x, i) => (
@@ -131,9 +157,24 @@ export default function OurAgents() {
                     </td>
                     <td style={{ fontSize: 16 }} title={x.platform}>{pi(x.platform)}</td>
                     <td style={{ fontWeight: 600 }}>{x.hostname}</td>
-                    <td className="text-sm text-secondary">{x.version}</td>
+                    <td className="text-sm text-secondary">
+                      {x.version}
+                      {x.needs_update && x.latest_version && (
+                        <span className="badge badge-amber badge-xs" style={{ marginLeft: 6 }}
+                          title={`latest is ${x.latest_version}`}>→ {x.latest_version}</span>
+                      )}
+                      {updateChip(x) && <span style={{ marginLeft: 6 }}>{updateChip(x)}</span>}
+                    </td>
                     <td><span className={`badge ${x.status === 'online' ? 'badge-green' : 'badge-gray'}`}>{x.status}</span></td>
                     <td className="text-sm text-secondary">{fd(x.last_seen)}</td>
+                    <td>
+                      {x.needs_update && x.status === 'online' && (
+                        <button className="btn btn-xs" disabled={updating}
+                          onClick={e => { e.stopPropagation(); pushUpdate({agent_ids: [x.id]}, `Updating ${x.hostname}`); }}>
+                          Update
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

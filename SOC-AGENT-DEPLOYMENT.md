@@ -65,3 +65,42 @@ The agent accepts `--key` and sends `X-EDR-Key` header if provided. If the backe
 - `~/soc-ui/trmm-fix-agent.py` — Fix/restart agents
 - `~/.local/bin/soc-browser` — Headless browser for dashboard
 - `~/.local/bin/soc-agents` — Dump Our Agents page content
+
+---
+
+## Agent auto-update (2026-09-17)
+
+**One published artifact.** `agent_unified.py` is the agent for every platform.
+`GET /api/agent/download/agent?platform=<os>` serves it with `X-Agent-Version` +
+`X-Agent-Sha256` (`/api/agent/download/windows` stays for installer/back-compat).
+
+**The version comes from the file.** `soc_api.agent_meta()` parses `AGENT_VERSION`
+out of `agent_unified.py` (mtime-cached) and hashes it, so releasing is:
+
+1. edit `AGENT_VERSION` in `agent_unified.py`
+2. deploy that file to the running server (`/home/aiagent/mission-control-ui/`)
+3. agents self-update on their next connect; force stragglers with
+   `POST /api/agents/update {"outdated": true}` (or `{"all": true}`)
+
+**What an agent does with an update** (on-connect ack, pushed `self_update`
+command, or the poll hint for agents without a WebSocket): download → sha256 check
+→ parse the payload `AGENT_VERSION` and refuse equal/older → syntax-compile →
+`agent.py.bak` backup → `os.replace` (atomic) → report `{"type":"update"}` to the
+server → re-exec. One attempt per process; any failure leaves the running agent
+untouched, and `~/.soc-agent-update.json` holds the last outcome.
+
+**One-time catch-up for agents below 1.1.1.** Agents running the old code cannot
+self-update — their update handlers were registered after the `__main__` guard
+(never loaded) and the on-connect check raised `NameError`. Push the installer
+once — Windows: `cmd /c "curl -o install.cmd http://173.208.232.91:8095/api/agent/install/windows-batch && install.cmd"`
+(or the TRMM sweep `trmm-reconnect-agents.py`), Linux: `curl -s http://173.208.232.91:8095/api/edr/install | sudo bash`.
+From 1.1.1 onward updates are automatic.
+
+**Where to look when an agent does not update.** `/api/agents/all` (needs_update,
+latest_version, update, update_requested_at) and the Agents page chips
+(`→ 1.1.x`, `updating…`, `updated`, `update failed`); per-agent history in
+`agent_telemetry.json` under the agent key (`update: {at, from, to, success, error}`).
+
+**Gotcha for future edits:** every `@handler(...)` must be defined *above* the
+`if __name__ == "__main__": main()` block at the end of `agent_unified.py`.
+Handlers below it never register when the agent runs as a script.
