@@ -159,3 +159,39 @@ the two artifacts can be released independently.
 - The `.ps1` must be pure ASCII — PowerShell 5.1 mis-parses UTF-8 punctuation.
 - A `SOCAgent.1.x.y.exe.bak` next to the agent means a packaged self-update completed;
   `soc-agent-update.log` records each swap attempt.
+
+---
+
+## Fleet convergence and Wazuh retirement (2026-09-17)
+
+### Keeping the fleet on the published build
+`trmm-converge-agents.py` (run on the SOC box, needs `TRMM_API_KEY`) reconciles the
+Windows fleet with what is published:
+
+| host state | action |
+|---|---|
+| on the published version for its kind | skip |
+| connected and >= 1.1.1 | queue `self_update` (no restart) |
+| not connected, or < 1.1.1 | run the installer (upgrades **and** leaves exactly one agent running) |
+
+Per-host state in `converge-state.json` suppresses re-pushing the same host for the same
+version inside `--cooldown` hours (default 6), so it is safe from a loop or timer:
+`--loop 900` keeps converging while machines come online; `--dry-run` lists the plan.
+
+### Removing the legacy Wazuh/OSSEC agent
+Inventory first (`--detect`), then remove. Both removers print one summary line per host:
+`CLEAN` / `REMOVED ...` / `PARTIAL ...`.
+
+- **Windows** (TRMM, as SYSTEM): `wazuh-remove-win.py [--host NAME | --detect]`
+  ships `wazuh-remove.ps1` as a base64 `-EncodedCommand`, so nothing has to be served
+  over HTTP. It stops and deletes `WazuhSvc`/`OssecSvc`, uninstalls the MSI, removes
+  `C:\Program Files (x86)\ossec-agent` (+ `ProgramData\ossec`), wazuh/ossec scheduled
+  tasks and firewall rules, then verifies.
+- **Linux** (root): `wazuh-remove.sh` — disables and deletes any wazuh/ossec unit
+  (files included), purges the package (apt/dnf/yum), drops the wazuh repo files and
+  keyring, removes `/var/ossec`, then verifies.
+
+Known state 2026-09-17: `.183` removed and verified; `.84`/`.185` already clean;
+`.193` still runs `wazuh-agent.service` (needs root — sudo there asks for a password).
+Windows: 23 of 30 online hosts had the agent (service + MSI + install dir) — removal is
+dispatched from the same tool.
