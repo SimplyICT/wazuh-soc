@@ -26,6 +26,8 @@ export default function Defender() {
   const toast = useToast();
   const [tab, setTab] = useState('alerts');
   const [busy, setBusy] = useState('');
+  const [actFor, setActFor] = useState('');
+  const [comment, setComment] = useState('');
   const s = useApi(() => fetch('/api/defender/summary').then(r => r.json()), []);
   const list = useApi(() => fetch(`/api/defender/alerts?source=${tab === 'endpoint' ? 'endpoint' : tab}`).then(r => r.json()), [tab]);
 
@@ -34,6 +36,28 @@ export default function Defender() {
 
   const d = s.data || {};
   const rows = list.data?.alerts || [];
+
+  // Record a decision in the SOC (event + case + review-queue item) and push it to
+  // Microsoft Defender when the app has the write roles.
+  const act = async (row, action) => {
+    setBusy(`${action}:${row.id}`);
+    try {
+      const res = await fetch('/api/defender/action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: row.source, id: row.id, action, comment }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'action failed');
+      const a = data.applied || {};
+      const pushed = a.defender && a.defender.pushed;
+      const detail = pushed ? 'pushed to Defender' : (a.defender ? `SOC only — ${a.defender.detail}` : 'SOC only');
+      toast(`${row.id.slice(0, 18)}: ${action} · event ${a.event ? 'ok' : '-'} · case ${a.case || '-'} · queue ${a.queue || '-'} · ${detail}`,
+        pushed ? 'success' : 'info');
+      setComment(''); setActFor('');
+      s.refetch(); list.refetch();
+    } catch (e) { toast(`Action failed: ${e.message}`, 'error'); }
+    setBusy('');
+  };
 
   const testTenant = async (id) => {
     setBusy(`test:${id}`);
@@ -116,6 +140,13 @@ export default function Defender() {
             </tbody>
           </table>
         )}
+        {d.write_capabilities && (d.write_capabilities.missing || []).length > 0 && (
+          <div className="text-sm text-secondary" style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+            <b>Resolutions are recorded in the SOC</b> (event + case + review-queue item).
+            <span> Pushing the decision back to Microsoft Defender needs the write roles — missing: </span>
+            <code>{(d.write_capabilities.missing || []).join(', ')}</code>
+          </div>
+        )}
         {(d.tenants || []).some(t => t.endpoint === 'missing_roles') && (
           <div className="text-sm text-secondary" style={{ padding: '10px 14px' }}>
             <span>Endpoint alerts need the app registration to hold </span>
@@ -141,7 +172,7 @@ export default function Defender() {
         ) : (
           <table>
             <thead><tr>
-              <th>Created</th><th>Severity</th><th>Title</th><th>Status</th><th>Device / User</th><th>MITRE</th><th>Source</th>
+              <th>Created</th><th>Severity</th><th>Title</th><th>Status</th><th>Device / User</th><th>MITRE</th><th>Source</th><th>Resolve</th>
             </tr></thead>
             <tbody>
               {rows.map(e => (
@@ -156,6 +187,35 @@ export default function Defender() {
                   <td className="text-sm">{[e.device, e.user].filter(Boolean).join(' · ') || '-'}</td>
                   <td className="text-sm">{(e.mitre || []).join(', ') || '-'}</td>
                   <td className="text-sm">{e.service_source || '-'}</td>
+                  <td>
+                    <div className="flex gap-6">
+                      <button className="btn btn-xs btn-primary" disabled={busy === `resolve:${e.id}`}
+                        onClick={() => { setActFor(`resolve:${e.id}`); setComment(''); }}>
+                        {busy === `resolve:${e.id}` ? '...' : 'Resolve'}
+                      </button>
+                      <button className="btn btn-xs" disabled={busy === `dismiss:${e.id}`}
+                        onClick={() => { setActFor(`dismiss:${e.id}`); setComment(''); }}>
+                        Dismiss
+                      </button>
+                    </div>
+                    {actFor.endsWith(e.id) && (
+                      <div style={{ marginTop: 6 }}>
+                        <input value={comment} placeholder="What did you find? (recorded on the case)"
+                          onChange={ev => setComment(ev.target.value)}
+                          style={{ display: 'block', width: 260, marginBottom: 4, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12 }} />
+                        <div className="flex gap-6">
+                          <button className="btn btn-xs btn-primary"
+                            disabled={busy.startsWith('resolve:') || busy.startsWith('dismiss:')}
+                            onClick={() => act(e, actFor.startsWith('dismiss') ? 'dismiss' : 'resolve')}>
+                            {actFor.startsWith('dismiss') ? 'Confirm dismiss' : 'Confirm resolve'}
+                          </button>
+                          <button className="btn btn-xs"
+                            onClick={() => act(e, 'note')}>Add note only</button>
+                          <button className="btn btn-xs" onClick={() => { setActFor(''); setComment(''); }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

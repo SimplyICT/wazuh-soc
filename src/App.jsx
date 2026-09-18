@@ -15,6 +15,7 @@ const Threats = lazy(() => import('./pages/Threats'));
 const Edr = lazy(() => import('./pages/Edr'));
 const Itdr = lazy(() => import('./pages/Itdr'));
 const Defender = lazy(() => import('./pages/Defender'));
+const ReviewQueue = lazy(() => import('./pages/ReviewQueue'));
 const Siem = lazy(() => import('./pages/Siem'));
 const Reports = lazy(() => import('./pages/Reports'));
 const CompliancePg = lazy(() => import('./pages/Compliance'));
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="siem" element={<SuspenseWrapper><Siem /></SuspenseWrapper>} />
         <Route path="itdr" element={<SuspenseWrapper><Itdr /></SuspenseWrapper>} />
         <Route path="defender" element={<SuspenseWrapper><Defender /></SuspenseWrapper>} />
+        <Route path="queue" element={<SuspenseWrapper><ReviewQueue /></SuspenseWrapper>} />
         <Route path="reports" element={<SuspenseWrapper><Reports /></SuspenseWrapper>} />
         <Route path="compliance" element={<SuspenseWrapper><CompliancePg /></SuspenseWrapper>} />
         <Route path="organizations" element={<SuspenseWrapper><Organizations /></SuspenseWrapper>} />
