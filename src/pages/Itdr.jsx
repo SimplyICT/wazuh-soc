@@ -27,6 +27,8 @@ export default function Itdr() {
   const [form, setForm] = useState({ name: '', tenant_id: '', client_id: '', client_secret: '', env_prefix: '' });
   const [credFor, setCredFor] = useState('');
   const [creds, setCreds] = useState({ tenant_id: '', client_id: '', client_secret: '' });
+  const [caseActFor, setCaseActFor] = useState('');
+  const [caseNote, setCaseNote] = useState('');
 
   const r = useApi(() => fetch('/api/itdr/summary').then(r => r.json()), []);
   const eventsR = useApi(
@@ -62,6 +64,24 @@ export default function Itdr() {
     } finally {
       setPolling(false);
     }
+  };
+
+  // Close / reopen an ITDR case (identity, OAuth-consent or Defender-derived).
+  const actOnCase = async (c, status) => {
+    if (!c.id) { toast('Case has no id — cannot update', 'error'); return; }
+    setBusy(`case:${c.id}`);
+    try {
+      const res = await fetch(`/api/itdr/cases/${encodeURIComponent(c.id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, notes: caseNote }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'update failed');
+      toast(`${c.id}: ${status}${caseNote ? ' · note recorded' : ''}`, 'success');
+      setCaseNote(''); setCaseActFor('');
+      casesR.refetch();
+    } catch (e) { toast(`Case update failed: ${e.message}`, 'error'); }
+    setBusy('');
   };
 
   const testConnection = async (id) => {
@@ -442,11 +462,11 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
             <div className="empty-state">No ITDR cases. Run detection rules to generate cases from events.</div>
           ) : (
             <table>
-              <thead><tr><th>Time</th>{multiTenant && <th>Tenant</th>}<th>Severity</th><th>Title</th><th>User</th><th>Status</th></tr></thead>
+              <thead><tr><th>Time</th>{multiTenant && <th>Tenant</th>}<th>Severity</th><th>Case</th><th>User</th><th>Status</th><th>Resolve</th></tr></thead>
               <tbody>
                 {cases.map((c, i) => (
-                  <tr key={c.timestamp + c.title + i}>
-                    <td className="text-sm">{formatDate(c.timestamp)}</td>
+                  <tr key={c.id || (c.created_at + c.title + i)}>
+                    <td className="text-sm text-nowrap">{formatDate(c.created_at || c.timestamp)}</td>
                     {multiTenant && <td>{tenantBadge(c.tenant_id, c.tenant_name)}</td>}
                     <td>
                       <span className={`badge ${
@@ -455,9 +475,55 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
                         'badge-gray'
                       }`}>{c.severity}</span>
                     </td>
-                    <td className="text-base">{c.title}</td>
+                    <td className="text-base">
+                      {c.title}
+                      <div className="text-sm text-secondary">
+                        {c.detection_type}{c.description ? ` · ${String(c.description).slice(0, 110)}` : ''}
+                      </div>
+                      {c.notes && (
+                        <div className="text-sm text-secondary">
+                          {String(c.notes).trim().split('\n').slice(-2).join(' ')}
+                        </div>
+                      )}
+                    </td>
                     <td className="text-base">{c.user}</td>
-                    <td><span className="badge badge-gray">{c.status || 'open'}</span></td>
+                    <td>
+                      <span className={`badge ${
+                        c.status === 'resolved' ? 'badge-green' :
+                        (c.status === 'false_positive' || c.status === 'closed') ? 'badge-gray' :
+                        c.status === 'investigating' ? 'badge-amber' : 'badge-red'
+                      }`}>{c.status || 'open'}</span>
+                    </td>
+                    <td>
+                      <div className="flex gap-6">
+                        <button className="btn btn-xs btn-primary" disabled={busy === `case:${c.id}`}
+                          onClick={() => { setCaseActFor(`resolve:${c.id}`); setCaseNote(''); }}>
+                          {busy === `case:${c.id}` ? '...' : 'Resolve'}
+                        </button>
+                        <button className="btn btn-xs" disabled={busy === `case:${c.id}`}
+                          onClick={() => { setCaseActFor(`false_positive:${c.id}`); setCaseNote(''); }}>
+                          False positive
+                        </button>
+                        {(c.status === 'resolved' || c.status === 'false_positive' || c.status === 'closed') && (
+                          <button className="btn btn-xs" disabled={busy === `case:${c.id}`}
+                            onClick={() => actOnCase(c, 'open')}>Reopen</button>
+                        )}
+                      </div>
+                      {caseActFor.endsWith(c.id || '#none') && (
+                        <div style={{ marginTop: 6 }}>
+                          <input value={caseNote} placeholder="What did you find? (recorded on the case)"
+                            onChange={ev => setCaseNote(ev.target.value)}
+                            style={{ display: 'block', width: 260, marginBottom: 4, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12 }} />
+                          <div className="flex gap-6">
+                            <button className="btn btn-xs btn-primary"
+                              onClick={() => actOnCase(c, caseActFor.startsWith('false_positive') ? 'false_positive' : 'resolve')}>
+                              Confirm {caseActFor.startsWith('false_positive') ? 'false positive' : 'resolve'}
+                            </button>
+                            <button className="btn btn-xs" onClick={() => { setCaseActFor(''); setCaseNote(''); }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

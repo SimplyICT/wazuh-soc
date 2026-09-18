@@ -28,6 +28,8 @@ export default function Defender() {
   const [busy, setBusy] = useState('');
   const [actFor, setActFor] = useState('');
   const [comment, setComment] = useState('');
+  const [bulk, setBulk] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const s = useApi(() => fetch('/api/defender/summary').then(r => r.json()), []);
   const list = useApi(() => fetch(`/api/defender/alerts?source=${tab === 'endpoint' ? 'endpoint' : tab}`).then(r => r.json()), [tab]);
 
@@ -57,6 +59,31 @@ export default function Defender() {
       s.refetch(); list.refetch();
     } catch (e) { toast(`Action failed: ${e.message}`, 'error'); }
     setBusy('');
+  };
+
+  // Bulk-clear triage noise. Always dry-run first so the analyst confirms real numbers.
+  const bulkResolve = async (dryRun) => {
+    setBulkBusy(true);
+    try {
+      const res = await fetch('/api/defender/bulk-resolve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ severities: ['informational', 'low'], dry_run: dryRun }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (dryRun) {
+        setBulk(data);
+        if (!data.matched) toast('No low/informational items need triage', 'info');
+      } else {
+        const skipped = data.defender_skipped
+          ? ` · ${data.defender_skipped} not pushed to Defender (${(data.reasons || []).join('; ')})` : '';
+        toast(`Bulk resolve: ${data.resolved} resolved in SOC · ${data.defender_pushed} pushed to Defender${skipped}`,
+          data.defender_pushed ? 'success' : 'info');
+        setBulk(null);
+        s.refetch(); list.refetch();
+      }
+    } catch (e) { toast(`Bulk resolve failed: ${e.message}`, 'error'); }
+    setBulkBusy(false);
   };
 
   const testTenant = async (id) => {
@@ -97,7 +124,7 @@ export default function Defender() {
         <div className="card-header">
           <div className="card-title">M365 tenants — Defender connections</div>
           <span className="text-sm text-secondary">
-            Roles: XDR {(d.roles_required?.xdr || []).join(', ')} · Endpoint {(d.roles_required?.endpoint || []).join(', ')}
+            XDR read: {(d.roles_required?.xdr || []).join(', ')} · Endpoint: alerts_v2 (same role); WindowsDefenderATP {((d.roles_required?.endpoint || []).join(', '))} only for the legacy API
           </span>
         </div>
         {(d.tenants || []).length === 0 ? (
@@ -116,7 +143,10 @@ export default function Defender() {
                   </td>
                   <td>{connBadge(t.identity, [], [])}</td>
                   <td>{connBadge(t.xdr, t.xdr_missing_roles, d.roles_required?.xdr)}</td>
-                  <td>{connBadge(t.endpoint, t.endpoint_missing_roles, d.roles_required?.endpoint)}</td>
+                  <td>
+                    {connBadge(t.endpoint, t.endpoint_missing_roles, d.roles_required?.endpoint)}
+                    {t.endpoint_via === 'graph' && <span className="text-sm text-secondary"> via Graph</span>}
+                  </td>
                   <td className="text-sm">
                     {formatDate(t.last_poll)}
                     {t.last_counts && (
@@ -145,6 +175,9 @@ export default function Defender() {
             <b>Resolutions are recorded in the SOC</b> (event + case + review-queue item).
             <span> Pushing the decision back to Microsoft Defender needs the write roles — missing: </span>
             <code>{(d.write_capabilities.missing || []).join(', ')}</code>
+            {(d.write_capabilities.missing_optional || []).length > 0 && (
+              <span className="text-secondary"> · optional: <code>{(d.write_capabilities.missing_optional || []).join(', ')}</code></span>
+            )}
           </div>
         )}
         {(d.tenants || []).some(t => t.endpoint === 'missing_roles') && (
@@ -162,7 +195,37 @@ export default function Defender() {
         <span className={`tab ${tab === 'alerts' ? 'active' : ''}`} onClick={() => setTab('alerts')}>Alerts ({d.alerts || 0})</span>
         <span className={`tab ${tab === 'incidents' ? 'active' : ''}`} onClick={() => setTab('incidents')}>Incidents ({d.incidents || 0})</span>
         <span className={`tab ${tab === 'endpoint' ? 'active' : ''}`} onClick={() => setTab('endpoint')}>Endpoint ({d.endpoint_alerts || 0})</span>
+        <span style={{ marginLeft: 'auto' }}>
+          <button className="btn btn-sm" disabled={bulkBusy} onClick={() => bulkResolve(true)}>
+            {bulkBusy ? '...' : 'Resolve low/informational'}
+          </button>
+        </span>
       </div>
+
+      {bulk && bulk.matched > 0 && (
+        <div className="card card-mb">
+          <div className="card-header">
+            <div className="card-title">Close {bulk.matched} low/informational item{bulk.matched === 1 ? '' : 's'}?</div>
+            <span className="text-sm text-secondary">
+              {bulk.write_capabilities && (bulk.write_capabilities.missing || []).length > 0
+                ? `recorded in the SOC; Defender push needs: ${(bulk.write_capabilities.missing || []).join(', ')}`
+                : 'recorded in the SOC and pushed to Defender'}
+            </span>
+          </div>
+          <div style={{ padding: '10px 14px' }}>
+            <div className="text-sm text-secondary" style={{ marginBottom: 6 }}>
+              {bulk.items.slice(0, 8).map(it => `${it.id.slice(0, 12)} (${it.severity})`).join(' · ')}
+              {bulk.items.length > 8 ? ` · +${bulk.items.length - 8} more` : ''}
+            </div>
+            <div className="flex gap-6">
+              <button className="btn btn-sm btn-primary" disabled={bulkBusy} onClick={() => bulkResolve(false)}>
+                {bulkBusy ? '...' : `Confirm — resolve ${bulk.matched}`}
+              </button>
+              <button className="btn btn-sm" onClick={() => setBulk(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         {list.loading ? <LoadingSpinner /> : rows.length === 0 ? (
@@ -186,7 +249,7 @@ export default function Defender() {
                   <td><span className="badge badge-gray">{e.status || '-'}</span></td>
                   <td className="text-sm">{[e.device, e.user].filter(Boolean).join(' · ') || '-'}</td>
                   <td className="text-sm">{(e.mitre || []).join(', ') || '-'}</td>
-                  <td className="text-sm">{e.service_source || '-'}</td>
+                  <td className="text-sm">{e.endpoint ? 'Defender for Endpoint (alerts_v2)' : (e.service_source || e.source)}</td>
                   <td>
                     <div className="flex gap-6">
                       <button className="btn btn-xs btn-primary" disabled={busy === `resolve:${e.id}`}
