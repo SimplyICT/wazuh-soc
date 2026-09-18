@@ -25,6 +25,8 @@ export default function Itdr() {
   const [busy, setBusy] = useState('');
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', tenant_id: '', client_id: '', client_secret: '', env_prefix: '' });
+  const [credFor, setCredFor] = useState('');
+  const [creds, setCreds] = useState({ tenant_id: '', client_id: '', client_secret: '' });
 
   const r = useApi(() => fetch('/api/itdr/summary').then(r => r.json()), []);
   const eventsR = useApi(
@@ -103,6 +105,33 @@ export default function Itdr() {
       setAdding(false);
       r.refetch();
     } catch (e) { toast(`Add tenant failed: ${e.message}`, 'error'); }
+    setBusy('');
+  };
+
+  // Point an existing tenant at a different app registration (or rotate its secret).
+  const saveCreds = async (id) => {
+    if (!creds.client_id.trim() || !creds.client_secret.trim()) {
+      toast('Client ID and secret are required', 'error'); return;
+    }
+    setBusy(`creds:${id}`);
+    try {
+      const res = await fetch(`/api/itdr/tenants/${encodeURIComponent(id)}/credentials`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenant_id: creds.tenant_id.trim(),
+          client_id: creds.client_id.trim(),
+          client_secret: creds.client_secret.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'could not save credentials');
+      const perms = data.permissions || {};
+      toast(`${id}: authenticated=${data.authenticated} · Identity: ${perms.identity || '?'} · Defender: ${perms.defender || '?'}`,
+        perms.identity === 'ok' && perms.defender === 'ok' ? 'success' : 'error');
+      setCreds({ tenant_id: '', client_id: '', client_secret: '' });
+      setCredFor('');
+      r.refetch();
+    } catch (e) { toast(`Credentials failed: ${e.message}`, 'error'); }
     setBusy('');
   };
 
@@ -256,7 +285,30 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
                           onClick={() => pollOne(t.id)}>
                           {busy === `poll:${t.id}` ? '...' : 'Poll'}
                         </button>
+                        <button className="btn btn-xs"
+                          onClick={() => { setCredFor(credFor === t.id ? '' : t.id);
+                                           setCreds({ tenant_id: t.tenant_id || '', client_id: '', client_secret: '' }); }}>
+                          {credFor === t.id ? 'Close' : 'Creds'}
+                        </button>
                       </div>
+                      {credFor === t.id && (
+                        <div style={{ marginTop: 6 }}>
+                          {[['tenant_id', 'Directory (tenant) ID'], ['client_id', 'Application (client) ID'],
+                            ['client_secret', 'Client secret']].map(([field, label]) => (
+                            <input key={field} value={creds[field]} placeholder={label}
+                              type={field === 'client_secret' ? 'password' : 'text'}
+                              onChange={e => setCreds({ ...creds, [field]: e.target.value })}
+                              style={{ display: 'block', width: 260, marginBottom: 4, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12 }} />
+                          ))}
+                          <button className="btn btn-xs btn-primary" disabled={busy === `creds:${t.id}`}
+                            onClick={() => saveCreds(t.id)}>
+                            {busy === `creds:${t.id}` ? 'Saving...' : 'Save + test'}
+                          </button>
+                          <div className="text-xs text-secondary" style={{ marginTop: 4 }}>
+                            Use this to move the tenant onto a different app registration (all five Graph roles).
+                          </div>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
