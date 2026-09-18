@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { path: '/rules', label: 'Rules & Decoders', icon: '\u2696' },
   { path: '/events', label: 'Events & Alerts', icon: '\u26A1' },
   { path: '/itdr', label: 'Identity (ITDR)', icon: '\uD83D\uDD12' },
+  { path: '/defender', label: 'M365 Defender', icon: '\uD83D\uDEE1' },
   { path: '/siem', label: 'SIEM', icon: '\u25C9' },
   { path: '/topology', label: 'Topology', icon: '\u267B' },
   { path: '/threats', label: 'Threat Intel', icon: '\u2764' },

@@ -264,3 +264,27 @@ customer admin consent once at
 **API:** `GET /api/itdr/tenants?health=true` (per-tenant probe),
 `GET /api/itdr/tenants/{id}/health`, `POST /api/itdr/tenants` (name + credentials),
 `POST /api/itdr/tenants/{id}/credentials`, `POST /api/itdr/poll[/{tenant_id}]`.
+
+
+### M365 Defender section (2026-09-18)
+
+The sidebar has a dedicated **M365 Defender** page (`#/defender`) next to Identity (ITDR):
+
+- KPIs: Defender XDR alerts, incidents, Defender-for-Endpoint alerts, open Defender cases
+  and how many were raised into the human review queue.
+- Per-tenant connection table: **Identity** (Graph audit/risk), **M365 Defender (XDR)**
+  (`SecurityAlert.Read.All` + `SecurityIncident.Read.All`) and **Defender for Endpoint**
+  (`Alert.Read.All`, `Machine.Read.All` on the *WindowsDefenderATP* API — a different
+  resource from Microsoft Graph, granted on the same app registration). Each row has
+  Test (fresh probe) and Poll now.
+- Alerts / Incidents / Endpoint tabs over the stored events (severity, status, device,
+  user, MITRE technique, service source).
+
+High/critical Defender findings are also handed to the SOC review queue
+(`soc_queue`, source `m365-defender`) so they appear on the dashboard/SLA board with
+every other alert; identity-only detections stay as ITDR cases only. Endpoint alerts are
+fetched from `https://api.security.microsoft.com/api/alerts` once the roles are granted —
+until then the poller records the status and keeps polling the other sources.
+
+API: `GET /api/defender/summary`, `GET /api/defender/alerts?source=alerts|incidents|endpoint`,
+`GET /api/itdr/tenants?health=true`.
