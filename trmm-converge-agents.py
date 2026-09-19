@@ -128,12 +128,15 @@ INSTALL_OUT: dict = {}
 def run_installer(agent_id: str, key: str, kind: str, host: str) -> str:
     """Push the installer and keep its output — a bare HTTP 200 says nothing."""
     url = EXE_INSTALL_URL if kind == "exe" else INSTALL_URL
-    # Try curl, then certutil: Harvest-remote runs a curl that cannot even open a
-    # socket ("getsockname() failed with errno 10022"), and with the download behind
-    # && the installer never ran — so the push did nothing while looking successful.
-    cmd = (f'curl.exe -sSL {url} -o "%TEMP%\\socagent-install.cmd"'
-           f' || certutil -urlcache -split -f {url} "%TEMP%\\socagent-install.cmd"'
-           f' & "%TEMP%\\socagent-install.cmd"')
+    # Fetch with PowerShell. The curl/certutil chain returned rc=200 with empty output
+    # while leaving the host untouched (17 hosts stayed down after a "successful" push),
+    # and an old curl cannot even open a socket. PowerShell always reports something.
+    # No double quotes inside: this whole string is itself a -Command "..." argument to
+    # cmd, and an inner quote would end that argument early.
+    ps = ('$ProgressPreference=\'SilentlyContinue\'; '
+          f'$f = Join-Path $env:TEMP \'socagent-install.cmd\'; '
+          f'Invoke-WebRequest -UseBasicParsing \'{url}\' -OutFile $f; & $f')
+    cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "' + ps + '"'
     code, body = trmm_cmd(agent_id, cmd, key, timeout=1500)
     # TRMM returns 200 as soon as the command is accepted; the host can still be on the
     # old version afterwards (four hosts sat on 1.1.0 while this reported "installed").
@@ -150,7 +153,8 @@ def run_installer(agent_id: str, key: str, kind: str, host: str) -> str:
 
 def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
                   cooldown_h: float, dry: bool, connected: set,
-                  retry_after_h: float = 0.5, kind_override: str = "auto") -> tuple:
+                  retry_after_h: float = 0.5, kind_override: str = "auto",
+                  force: bool = False) -> tuple:
     host = a.get("hostname", "?")
     aid = a.get("agent_id", "?")
     entry = tele.get(f"windows-{host}") or {}
@@ -162,7 +166,7 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
     meta = pub[kind]
     want = meta["version"]
 
-    if version_tuple(ver) >= version_tuple(want):
+    if version_tuple(ver) >= version_tuple(want) and not force:
         state.pop(host, None)        # resolved: drop it so the SOC "needs hands" list clears
         return host, ver, "current", ""
 
@@ -269,6 +273,9 @@ def main() -> int:
     ap.add_argument("--defer-reason", default="", help="why the host is deferred (shown in the SOC)")
     ap.add_argument("--resume", action="append", default=[], metavar="HOST",
                     help="clear a deferral so the host is converged again")
+    ap.add_argument("--force", action="store_true",
+                    help="push the installer even to hosts already on the published version "
+                         "(used to roll out installer changes such as the task's repeat trigger)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--loop", type=int, default=0,
                     help="seconds between passes (0 = run once)")
@@ -318,7 +325,7 @@ def main() -> int:
                 return any(fnmatch.fnmatch(low, p) or p in low for p in pats)
             targets = [a for a in online if matches(a.get("hostname", ""))]
 
-        behind = [a for a in targets if host_state(a, tele, pub)[3]]
+        behind = [a for a in targets if args.force or host_state(a, tele, pub)[3]]
         # A host whose agent is checking in but whose RMM agent is offline is invisible to
         # the loop above, so it would sit on an old version forever without a word.
         trmm_hosts = {str(a.get("hostname", "")).lower() for a in agents}
@@ -350,7 +357,7 @@ def main() -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = [ex.submit(converge_host, a, args.key, tele, pub, state,
                               args.cooldown, args.dry_run, connected,
-                              args.retry_after, args.kind) for a in behind]
+                              args.retry_after, args.kind, args.force) for a in behind]
             for f in concurrent.futures.as_completed(futs):
                 results.append(f.result())
         for host, ver, status, action in sorted(results):
