@@ -18,6 +18,54 @@ function tenantBadge(tenantId, tenantName) {
   );
 }
 
+const DECIDED = { resolved: 'Resolved (SOC)', false_positive: 'Dismissed (SOC)', closed: 'Closed (SOC)' };
+const ACTIONABLE_SOURCES = ['riskDetection', 'auditLog', 'defenderAlert', 'defenderIncident', 'mdeAlert'];
+
+function decisionChip(item) {
+  if (item.actioned) {
+    const st = String(item.soc_status || '').toLowerCase();
+    return <span className={`badge ${st === 'false_positive' ? 'badge-gray' : 'badge-green'}`}>{DECIDED[st] || 'Closed (SOC)'}</span>;
+  }
+  // Identity events carry a risk level, not a triage state — don't render that as one.
+  const st = String(item.status || '').toLowerCase();
+  const live = ['new', 'active', 'open', 'investigating', 'in progress', 'inprogress', 'in_progress'];
+  return <span className="badge badge-amber">{live.includes(st) ? item.status : 'open'}</span>;
+}
+
+// Resolve / dismiss (with a note) or reopen — shared by the Identity Events and Cases tabs.
+function RowActions({ id, actioned, busyId, onDecide, falseLabel = 'Dismiss' }) {
+  const [open, setOpen] = useState('');
+  const [note, setNote] = useState('');
+  const busy = busyId === `act:${id}`;
+  if (actioned) {
+    return <button className="btn btn-xs" disabled={busy} onClick={() => onDecide('reopen', '')}>Reopen</button>;
+  }
+  return (
+    <div>
+      <div className="flex gap-6">
+        <button className="btn btn-xs btn-primary" disabled={busy}
+          onClick={() => { setOpen('resolve'); setNote(''); }}>{busy ? '...' : 'Resolve'}</button>
+        <button className="btn btn-xs" disabled={busy}
+          onClick={() => { setOpen('dismiss'); setNote(''); }}>{falseLabel}</button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          <input value={note} placeholder="What did you find? (recorded on the case)"
+            onChange={e => setNote(e.target.value)}
+            style={{ display: 'block', width: 260, marginBottom: 4, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12 }} />
+          <div className="flex gap-6">
+            <button className="btn btn-xs btn-primary" disabled={busy}
+              onClick={() => onDecide(open, note)}>
+              Confirm {open === 'dismiss' ? falseLabel.toLowerCase() : 'resolve'}
+            </button>
+            <button className="btn btn-xs" onClick={() => { setOpen(''); setNote(''); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Itdr() {
   const toast = useToast();
   const [tenantFilter, setTenantFilter] = useState('');
@@ -27,8 +75,6 @@ export default function Itdr() {
   const [form, setForm] = useState({ name: '', tenant_id: '', client_id: '', client_secret: '', env_prefix: '' });
   const [credFor, setCredFor] = useState('');
   const [creds, setCreds] = useState({ tenant_id: '', client_id: '', client_secret: '' });
-  const [caseActFor, setCaseActFor] = useState('');
-  const [caseNote, setCaseNote] = useState('');
 
   const r = useApi(() => fetch('/api/itdr/summary').then(r => r.json()), []);
   const eventsR = useApi(
@@ -66,21 +112,34 @@ export default function Itdr() {
     }
   };
 
-  // Close / reopen an ITDR case (identity, OAuth-consent or Defender-derived).
-  const actOnCase = async (c, status) => {
-    if (!c.id) { toast('Case has no id — cannot update', 'error'); return; }
-    setBusy(`case:${c.id}`);
+  // Record a decision. Events go through /api/itdr/events/{id}/action (which also
+  // closes the derived case); cases close directly. Both stamp the event, so the
+  // next poll no longer re-creates what was just closed.
+  const decide = async (item, kind, action, note) => {
+    setBusy(`act:${item.id}`);
     try {
-      const res = await fetch(`/api/itdr/cases/${encodeURIComponent(c.id)}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, notes: caseNote }),
-      });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || 'update failed');
-      toast(`${c.id}: ${status}${caseNote ? ' · note recorded' : ''}`, 'success');
-      setCaseNote(''); setCaseActFor('');
-      casesR.refetch();
-    } catch (e) { toast(`Case update failed: ${e.message}`, 'error'); }
+      let res, data;
+      if (kind === 'event') {
+        res = await fetch(`/api/itdr/events/${encodeURIComponent(item.id)}/action`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, comment: note }),
+        });
+        data = await res.json();
+        if (!data.success) throw new Error(data.error || 'action failed');
+        const a = data.applied || {};
+        toast(`${action} · event ${a.event ? 'ok' : '-'} · case ${a.case || '-'}`, 'success');
+      } else {
+        const status = action === 'resolve' ? 'resolved' : action === 'dismiss' ? 'false_positive' : 'open';
+        res = await fetch(`/api/itdr/cases/${encodeURIComponent(item.id)}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status, notes: note }),
+        });
+        data = await res.json();
+        if (!data.success) throw new Error(data.error || 'update failed');
+        toast(`${item.id}: ${status}${note ? ' · note recorded' : ''}`, 'success');
+      }
+      eventsR.refetch(); casesR.refetch();
+    } catch (e) { toast(`Action failed: ${e.message}`, 'error'); }
     setBusy('');
   };
 
@@ -418,7 +477,7 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
             <div className="table-container" style={{ maxHeight: 500, overflow: 'auto' }}>
               <table>
                 <thead><tr className="th-sticky">
-                  <th>Time</th>{multiTenant && <th>Tenant</th>}<th>Source</th><th>User</th><th>Detail</th><th>Risk</th>
+                  <th>Time</th>{multiTenant && <th>Tenant</th>}<th>Source</th><th>User</th><th>Detail</th><th>Risk</th><th>Status</th><th>Resolve</th>
                 </tr></thead>
                 <tbody>
                   {events.map((ev, i) => (
@@ -443,6 +502,13 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
                           ev.risk_level === 'medium' ? 'badge-amber' :
                           'badge-gray'
                         }`}>{ev.risk_level || ev.status || '-'}</span>
+                      </td>
+                      <td>{decisionChip(ev)}</td>
+                      <td>
+                        {ACTIONABLE_SOURCES.includes(ev.source) && ev.id ? (
+                          <RowActions id={ev.id} actioned={ev.actioned} busyId={busy}
+                            onDecide={(action, note) => decide(ev, 'event', action, note)} />
+                        ) : <span className="text-sm text-secondary">-</span>}
                       </td>
                     </tr>
                   ))}
@@ -487,42 +553,11 @@ ITDR_SIMPLYICT_CLIENT_SECRET=your-app-secret</pre>
                       )}
                     </td>
                     <td className="text-base">{c.user}</td>
+                    <td>{decisionChip(c)}</td>
                     <td>
-                      <span className={`badge ${
-                        c.status === 'resolved' ? 'badge-green' :
-                        (c.status === 'false_positive' || c.status === 'closed') ? 'badge-gray' :
-                        c.status === 'investigating' ? 'badge-amber' : 'badge-red'
-                      }`}>{c.status || 'open'}</span>
-                    </td>
-                    <td>
-                      <div className="flex gap-6">
-                        <button className="btn btn-xs btn-primary" disabled={busy === `case:${c.id}`}
-                          onClick={() => { setCaseActFor(`resolve:${c.id}`); setCaseNote(''); }}>
-                          {busy === `case:${c.id}` ? '...' : 'Resolve'}
-                        </button>
-                        <button className="btn btn-xs" disabled={busy === `case:${c.id}`}
-                          onClick={() => { setCaseActFor(`false_positive:${c.id}`); setCaseNote(''); }}>
-                          False positive
-                        </button>
-                        {(c.status === 'resolved' || c.status === 'false_positive' || c.status === 'closed') && (
-                          <button className="btn btn-xs" disabled={busy === `case:${c.id}`}
-                            onClick={() => actOnCase(c, 'open')}>Reopen</button>
-                        )}
-                      </div>
-                      {caseActFor.endsWith(c.id || '#none') && (
-                        <div style={{ marginTop: 6 }}>
-                          <input value={caseNote} placeholder="What did you find? (recorded on the case)"
-                            onChange={ev => setCaseNote(ev.target.value)}
-                            style={{ display: 'block', width: 260, marginBottom: 4, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 8px', borderRadius: 'var(--radius-sm)', fontSize: 12 }} />
-                          <div className="flex gap-6">
-                            <button className="btn btn-xs btn-primary"
-                              onClick={() => actOnCase(c, caseActFor.startsWith('false_positive') ? 'false_positive' : 'resolve')}>
-                              Confirm {caseActFor.startsWith('false_positive') ? 'false positive' : 'resolve'}
-                            </button>
-                            <button className="btn btn-xs" onClick={() => { setCaseActFor(''); setCaseNote(''); }}>Cancel</button>
-                          </div>
-                        </div>
-                      )}
+                      <RowActions id={c.id} actioned={c.status === 'resolved' || c.status === 'false_positive' || c.status === 'closed'}
+                        busyId={busy} falseLabel="False positive"
+                        onDecide={(action, note) => decide(c, 'case', action, note)} />
                     </td>
                   </tr>
                 ))}
