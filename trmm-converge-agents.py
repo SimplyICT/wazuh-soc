@@ -96,7 +96,9 @@ def trmm_cmd(agent_id: str, cmd: str, key: str, timeout: int = 240):
     try:
         with urllib.request.urlopen(req, context=ssl.create_default_context(),
                                     timeout=timeout + 30) as r:
-            return r.status, r.read().decode()[:200]
+            # Keep a useful slice: the installer's output is what explains a no-effect push,
+            # and 200 chars only ever captured the script banner.
+            return r.status, r.read().decode(errors="replace")[:4000]
     except Exception as e:                     # 502/504 = gateway gave up waiting
         return None, str(e)[:200]
 
@@ -120,26 +122,43 @@ def queue_self_update(key: str, kind: str, meta: dict) -> bool:
     return True
 
 
+INSTALL_OUT: dict = {}
+
+
 def run_installer(agent_id: str, key: str, kind: str, host: str) -> str:
+    """Push the installer and keep its output — a bare HTTP 200 says nothing."""
     url = EXE_INSTALL_URL if kind == "exe" else INSTALL_URL
+    # Try curl, then certutil: Harvest-remote runs a curl that cannot even open a
+    # socket ("getsockname() failed with errno 10022"), and with the download behind
+    # && the installer never ran — so the push did nothing while looking successful.
     cmd = (f'curl.exe -sSL {url} -o "%TEMP%\\socagent-install.cmd"'
-           f' && "%TEMP%\\socagent-install.cmd"')
+           f' || certutil -urlcache -split -f {url} "%TEMP%\\socagent-install.cmd"'
+           f' & "%TEMP%\\socagent-install.cmd"')
     code, body = trmm_cmd(agent_id, cmd, key, timeout=1500)
+    # TRMM returns 200 as soon as the command is accepted; the host can still be on the
+    # old version afterwards (four hosts sat on 1.1.0 while this reported "installed").
+    # The tail of the command output is kept so a no-effect push can explain itself.
+    text = " ".join((body or "").replace(chr(13), "").split())
+    INSTALL_OUT[host] = {"kind": kind, "http": code, "output": text[-600:]}
+    tail = text[-160:]
     if code == 200:
-        return "installed"
+        return f"installed (rc=200) {tail}"
     if code is None and ("502" in body or "504" in body or "timed out" in body.lower()):
         return "installer dispatched (TRMM gateway timed out)"
-    return f"installer failed: {body[:80]}"
+    return f"installer failed: {tail or body[:80]}"
 
 
 def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
-                  cooldown_h: float, dry: bool, connected: set) -> tuple:
+                  cooldown_h: float, dry: bool, connected: set,
+                  retry_after_h: float = 0.5, kind_override: str = "auto") -> tuple:
     host = a.get("hostname", "?")
     aid = a.get("agent_id", "?")
     entry = tele.get(f"windows-{host}") or {}
     system = (entry.get("data") or {}).get("system") or {}
     ver = system.get("agent_version") or "?"
     kind = "exe" if str(system.get("build", "")).lower() == "exe" else "script"
+    if kind_override != "auto":
+        kind = kind_override
     meta = pub[kind]
     want = meta["version"]
 
@@ -149,6 +168,24 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
     prev = state.get(host) or {}
     if prev.get("target") == want and prev.get("at"):
         age_h = (time.time() - float(prev["at"])) / 3600
+        was_push = str(prev.get("outcome", "")).startswith(("installed", "installer dispatched", "installer failed"))
+        attempts = int(prev.get("attempts", 1))
+        # An installer push that reported success but left the host behind is the
+        # failure this tool exists to catch: retry with the OTHER installer rather
+        # than sitting in the full cooldown showing a green "installed".
+        if was_push and age_h >= retry_after_h and attempts < 3:
+            alt = "exe" if prev.get("kind", kind) == "script" else "script"
+            why = f"previous {prev.get('kind')} push had no effect {age_h:.1f}h ago"
+            action = f"installer ({alt}, retry {attempts + 1}: {why})"
+            if not dry:
+                action = run_installer(aid, key, alt, host)
+            state[host] = {"at": time.time(), "from": ver, "target": want, "action": action,
+                           "outcome": action, "kind": alt, "attempts": attempts + 1,
+                           "output": (INSTALL_OUT.get(host) or {}).get("output", "")}
+            return host, ver, "retry", action
+        if was_push and attempts >= 3 and age_h < cooldown_h:
+            return host, ver, "STUCK", (f"still v{ver} after {attempts} installer attempts — "
+                                        f"last output: {str(prev.get('output') or '')[:160]}")
         if age_h < cooldown_h:
             return host, ver, "cooldown", f"({age_h:.1f}h ago: {prev.get('action')})"
 
@@ -166,7 +203,9 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
         if not dry:
             action = run_installer(aid, key, kind, host)
 
-    state[host] = {"at": time.time(), "from": ver, "target": want, "action": action}
+    state[host] = {"at": time.time(), "from": ver, "target": want, "action": action,
+                   "outcome": action, "kind": kind, "attempts": 1,
+                   "output": (INSTALL_OUT.get(host) or {}).get("output", "")}
     return host, ver, "pushed", action
 
 
@@ -189,6 +228,10 @@ def main() -> int:
                     help="limit to these hosts (glob or substring, repeatable)")
     ap.add_argument("--cooldown", type=float, default=6.0,
                     help="hours before re-pushing the same host for the same version")
+    ap.add_argument("--retry-after", type=float, default=0.5, dest="retry_after",
+                    help="hours after an ineffective installer push before retrying with the other installer")
+    ap.add_argument("--kind", choices=("auto", "exe", "script"), default="auto",
+                    help="force the installer kind instead of following the host's current build")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--loop", type=int, default=0,
                     help="seconds between passes (0 = run once)")
@@ -229,13 +272,37 @@ def main() -> int:
             targets = [a for a in online if matches(a.get("hostname", ""))]
 
         behind = [a for a in targets if host_state(a, tele, pub)[3]]
+        # A host whose agent is checking in but whose RMM agent is offline is invisible to
+        # the loop above, so it would sit on an old version forever without a word.
+        trmm_hosts = {str(a.get("hostname", "")).lower() for a in agents}
+        trmm_online = {str(a.get("hostname", "")).lower() for a in online}
+        rmm_blind = []
+        for key, entry in tele.items():
+            host = key.split("-", 1)[-1]
+            if host.lower() in trmm_online:
+                continue        # already handled as a normal target
+            try:
+                seen = _dt.datetime.fromisoformat(str(entry.get("last_seen", "")).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            sysd = (entry.get("data") or {}).get("system") or {}
+            ver = sysd.get("agent_version") or "?"
+            kind = "exe" if str(sysd.get("build", "")).lower() == "exe" else "script"
+            if seen >= _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24) \
+                    and version_tuple(ver) < version_tuple(pub[kind]["version"]):
+                why = "RMM record offline" if host.lower() in trmm_hosts else "no RMM record"
+                rmm_blind.append((host, ver, round((_dt.datetime.now(_dt.timezone.utc) - seen).total_seconds() / 60), why))
         log(f"TRMM windows: {len(agents)} ({len(online)} online); "
             f"online and behind: {len(behind)}")
+        for host, ver, age_m, why in sorted(rmm_blind):
+            log(f"  {host:<28} {ver:<7} NEEDS RMM  {why}, agent seen {age_m}m ago — "
+                f"installer cannot be pushed until the RMM agent is reachable")
 
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = [ex.submit(converge_host, a, args.key, tele, pub, state,
-                              args.cooldown, args.dry_run, connected) for a in behind]
+                              args.cooldown, args.dry_run, connected,
+                              args.retry_after, args.kind) for a in behind]
             for f in concurrent.futures.as_completed(futs):
                 results.append(f.result())
         for host, ver, status, action in sorted(results):
