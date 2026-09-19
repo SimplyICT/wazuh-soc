@@ -30,8 +30,8 @@ import os
 import ssl
 import sys
 import time
-import urllib.request
 from datetime import datetime, timezone
+import urllib.request
 from pathlib import Path
 
 TRMM_API = "https://api.simplyict.com.au"
@@ -163,6 +163,7 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
     want = meta["version"]
 
     if version_tuple(ver) >= version_tuple(want):
+        state.pop(host, None)        # resolved: drop it so the SOC "needs hands" list clears
         return host, ver, "current", ""
 
     prev = state.get(host) or {}
@@ -218,6 +219,33 @@ def host_state(a: dict, tele: dict, pub: dict) -> tuple:
     kind = "exe" if str(system.get("build", "")).lower() == "exe" else "script"
     want = pub[kind]["version"]
     return ver, kind, want, version_tuple(ver) < version_tuple(want)
+
+
+SOC_STATUS_FILE = Path(os.environ.get("SOC_CONVERGE_STATUS",
+                                        "/home/aiagent/mission-control-ui/agent_converge.json"))
+
+
+def publish_status(statuses: list, pub: dict) -> None:
+    """Hand the SOC what only a human can resolve.
+
+    The Agents page shows these with the captured installer output, so a host that
+    cannot converge stops looking identical to one that simply has not checked in.
+    """
+    items = []
+    for host, ver, status, action in statuses:
+        if status not in ("STUCK", "NEEDS RMM"):
+            continue
+        items.append({"host": host, "version": ver, "status": status,
+                      "reason": action, "at": datetime.now(timezone.utc).isoformat()})
+    payload = {"generated_at": datetime.now(timezone.utc).isoformat(),
+               "published": {"script": pub["script"]["version"], "exe": pub["exe"]["version"]},
+               "items": sorted(items, key=lambda i: i["host"].lower())}
+    try:
+        SOC_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SOC_STATUS_FILE.write_text(json.dumps(payload, indent=2))
+        log(f"published {len(items)} host(s) needing hands to {SOC_STATUS_FILE}")
+    except Exception as e:
+        log(f"could not publish needs-hands status: {e}")
 
 
 def main() -> int:
@@ -297,6 +325,7 @@ def main() -> int:
         for host, ver, age_m, why in sorted(rmm_blind):
             log(f"  {host:<28} {ver:<7} NEEDS RMM  {why}, agent seen {age_m}m ago — "
                 f"installer cannot be pushed until the RMM agent is reachable")
+        rmm_rows = [(h, v, "NEEDS RMM", f"{w}, agent seen {a}m ago") for h, v, a, w in rmm_blind]
 
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -307,6 +336,9 @@ def main() -> int:
                 results.append(f.result())
         for host, ver, status, action in sorted(results):
             log(f"  {host:<28} {ver:<7} {status:<9} {action}")
+
+        if not args.dry_run:
+            publish_status(results + rmm_rows, pub)
 
         if not args.dry_run:
             save_state(state)

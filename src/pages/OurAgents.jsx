@@ -23,6 +23,7 @@ export default function OurAgents() {
   const { key: rk } = useRefresh();
   const o = useApi(() => fetch('/api/agents/online').then(r => r.json()), [], rk);
   const a = useApi(() => fetch('/api/agents/all').then(r => r.json()), [], rk);
+  const nh = useApi(() => fetch('/api/agents/needs-hands').then(r => r.json()), [], rk);
   const [f, sf] = useState('all');
   const [selected, setSelected] = useState(new Set());
   const [updating, setUpdating] = useState(false);
@@ -38,6 +39,7 @@ export default function OurAgents() {
   const pc = {}; all.forEach(x => { pc[x.platform] = (pc[x.platform] || 0) + 1; });
   const oc = online.length, ofc = all.filter(x => x.status !== 'online').length;
   const outdated = all.filter(x => x.needs_update);
+  const needsHands = nh.data?.items || [];
   const fl = f === 'all' ? all : f === 'online' ? online : all.filter(x => x.status === 'offline');
 
   const toggleSelect = (id) => {
@@ -115,6 +117,56 @@ export default function OurAgents() {
 
       <div className="card">
         <div className="card-header">
+      <div className="card card-mb">
+        <div className="card-header">
+          <div className="card-title">
+            Needs hands ({needsHands.length})
+            <span className={`badge ${needsHands.length ? 'badge-amber' : 'badge-green'}`} style={{ marginLeft: 8 }}>
+              {needsHands.length ? 'blocked' : 'clear'}
+            </span>
+          </div>
+          <span className="text-sm text-secondary">
+            {needsHands.length
+              ? `automatic convergence cannot fix these${nh.data?.generated_at ? ` (checked ${fd(nh.data.generated_at)})` : ''} · published ${nh.data?.published?.script || '?'}`
+              : 'every host is current or reachable — nothing needs a human'}
+          </span>
+        </div>
+        {needsHands.length > 0 && (
+          <table>
+            <thead><tr>
+              <th>Host</th><th>Reported</th><th>Last seen</th><th>Why it cannot be auto-fixed</th>
+            </tr></thead>
+            <tbody>
+              {needsHands.map(it => (
+                <tr key={it.host}>
+                  <td className="text-base">{it.host}
+                    {it.platform && <div className="text-sm text-secondary">{it.platform}{it.build ? ` · ${it.build}` : ''}</div>}
+                  </td>
+                  <td className="text-sm">
+                    <span className="badge badge-amber">v{it.reported_version || '?'}</span>
+                    {it.latest_version && String(it.reported_version) !== String(it.latest_version) &&
+                      <span className="text-sm text-secondary"> → {it.latest_version}</span>}
+                  </td>
+                  <td className="text-sm text-nowrap">
+                    {it.online ? <span className="badge badge-green">online</span> : (it.last_seen ? fd(it.last_seen) : 'never')}
+                  </td>
+                  <td className="text-sm">
+                    <b>{it.status === 'STUCK' ? 'installer ineffective' : 'RMM agent unreachable'}</b>
+                    <div className="text-sm text-secondary" style={{ whiteSpace: 'pre-wrap' }}>{it.reason}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {needsHands.length > 0 && (
+          <div className="text-sm text-secondary" style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+            A stuck host keeps its old agent version until the installer can run there — check network egress to the
+            collector ({nh.data?.collector || SERVER_HOST}) and endpoint security, then re-run <code>trmm-converge-agents.py --host &lt;name&gt;</code>.
+          </div>
+        )}
+      </div>
+
           <div className="card-title">Our Agents ({all.length})</div>
           <div className="flex gap-8 items-center">
             <span className="filter-tab text-base" style={{ cursor: 'pointer' }} onClick={toggleSelectAll}>
