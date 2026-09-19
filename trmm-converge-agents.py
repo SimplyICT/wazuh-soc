@@ -167,6 +167,10 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
         return host, ver, "current", ""
 
     prev = state.get(host) or {}
+    deferred = prev.get("deferred")
+    if deferred:
+        # Marked for a site visit (--defer): do not push, do not age the cooldown.
+        return host, ver, "ON SITE", str(deferred.get("reason") or "waiting on a site visit")
     if prev.get("target") == want and prev.get("at"):
         age_h = (time.time() - float(prev["at"])) / 3600
         was_push = str(prev.get("outcome", "")).startswith(("installed", "installer dispatched", "installer failed"))
@@ -233,7 +237,7 @@ def publish_status(statuses: list, pub: dict) -> None:
     """
     items = []
     for host, ver, status, action in statuses:
-        if status not in ("STUCK", "NEEDS RMM"):
+        if status not in ("STUCK", "NEEDS RMM", "ON SITE"):
             continue
         items.append({"host": host, "version": ver, "status": status,
                       "reason": action, "at": datetime.now(timezone.utc).isoformat()})
@@ -260,6 +264,11 @@ def main() -> int:
                     help="hours after an ineffective installer push before retrying with the other installer")
     ap.add_argument("--kind", choices=("auto", "exe", "script"), default="auto",
                     help="force the installer kind instead of following the host's current build")
+    ap.add_argument("--defer", action="append", default=[], metavar="HOST",
+                    help="stop pushing to this host until --resume (for hosts needing a site visit)")
+    ap.add_argument("--defer-reason", default="", help="why the host is deferred (shown in the SOC)")
+    ap.add_argument("--resume", action="append", default=[], metavar="HOST",
+                    help="clear a deferral so the host is converged again")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--loop", type=int, default=0,
                     help="seconds between passes (0 = run once)")
@@ -274,6 +283,16 @@ def main() -> int:
         pub = published()
         tele = telemetry()
         state = load_state()
+        for h in args.resume:
+            if state.get(h, {}).pop("deferred", None) is not None:
+                log(f"{h}: deferral cleared - back in the convergence set")
+        for h in args.defer:
+            entry = state.setdefault(h, {"from": "?", "target": pub["script"]["version"]})
+            entry["deferred"] = {"at": time.time(),
+                                "reason": args.defer_reason or "waiting on a site visit"}
+            log(f"{h}: deferred - {entry['deferred']['reason']}")
+        if args.defer or args.resume:
+            save_state(state)
         # "Connected" = live WS in either worker, or a check-in inside the window
         # the API uses. TRMM-online-but-not-connected is the stuck-agent case.
         cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=10)
