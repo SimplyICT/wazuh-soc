@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { useRefresh } from '../components/RefreshContext';
 import KpiCard from '../components/KpiCard';
@@ -19,12 +19,213 @@ const DEPLOY_CMDS = [
   { platform: 'macOS', method: 'Terminal (sudo)', cmd: `curl -sL ${SERVER_BASE_URL}/api/agent/install/macos | sudo bash` },
 ];
 
+// Per-host response: the action catalogue (/api/agent/respond/actions) is the only source of
+// actions and their parameters. These two maps exist solely to decide how loudly the UI warns,
+// because the server contract carries no destructive/confirm flag.
+const DESTRUCTIVE_ACTIONS = new Set(['kill', 'isolate', 'quarantine']);
+
+function isDestructive(name, args) {
+  if (DESTRUCTIVE_ACTIONS.has(name)) return true;
+  return name === 'service' && (args.action === 'stop' || args.action === 'disable');
+}
+
+// Card-status vocabulary of /api/agent/responses: the joined command row decides it.
+const RESPONSE_STATUS = {
+  done: ['badge-green', 'done'],
+  pending: ['badge-amber', 'pending'],
+  sent: ['badge-amber', 'sent'],
+  error: ['badge-red', 'failed'],
+  failed: ['badge-red', 'failed'],
+};
+
+// One-line gist of the agent's result dict; the untruncated JSON stays in the cell tooltip.
+function resultSummary(r) {
+  if (r == null) return '';
+  if (typeof r === 'string') return r;
+  if (r.error) return `error: ${r.error}`;
+  for (const k of ['detail', 'quarantined_to', 'stdout_tail', 'stderr_tail', 'name']) {
+    if (r[k]) return String(r[k]);
+  }
+  try { return JSON.stringify(r); } catch { return ''; }
+}
+
+// POST /api/agent/{id}/respond answers `delivered: true` when the command went out on the live
+// WebSocket, false when it waits for the agent's next poll/reconnect.
+function deliveryLabel(d) {
+  return d.delivered === true ? 'delivered now' : 'queued for the next check-in';
+}
+
+function RespondPanel({ agent, actions, catalogueError, onDone }) {
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [vals, setVals] = useState({});
+  const [comment, setComment] = useState('');
+  const [caseId, setCaseId] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const spec = actions[name] || null;
+  const allParams = Object.entries(spec?.params || {});
+  // run_script's confirm flag is the acknowledgement checkbox below, so it must not render twice.
+  const params = allParams.filter(([k]) => !(name === 'run_script' && k === 'confirm'));
+  const isScript = name === 'run_script';
+  const acked = vals.confirm === true;
+  const missing = params.filter(([k, p]) => p.required && (vals[k] === undefined || vals[k] === '')).map(([k, p]) => p.label || k);
+
+  const pick = (k, v) => { setVals(prev => ({ ...prev, [k]: v })); setConfirming(false); };
+
+  const buildArgs = () => {
+    const out = {};
+    for (const [k, p] of params) {
+      const v = vals[k];
+      if (p.type === 'bool') { out[k] = v === true; continue; }
+      if (v === undefined || v === '') continue;  // leave the server's own default in place
+      out[k] = p.type === 'int' ? Number(v) : v;
+    }
+    if (isScript) out.confirm = acked;  // the agent refuses run_script without it
+    return out;
+  };
+
+  const canSend = !!name && missing.length === 0 && !(isScript && !acked) && !busy;
+
+  const send = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(agent.id)}/respond`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: name, args: buildArgs(), comment, case_id: caseId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.success === false) throw new Error(d.error || `HTTP ${res.status}`);
+      toast(`${spec?.label || name} → ${agent.hostname}: ${deliveryLabel(d)}`, 'success');
+      setConfirming(false); setName(''); setVals({}); setComment(''); setCaseId('');
+      onDone();
+    } catch (e) {
+      toast(`Response failed: ${e.message}`, 'error');
+    }
+    setBusy(false);
+  };
+
+  const destructive = isDestructive(name, buildArgs());
+  const label = spec?.label || name;
+
+  if (Object.keys(actions).length === 0) {
+    return (
+      <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border)' }} className="text-sm text-secondary">
+        {catalogueError
+          ? `Could not load the response action catalogue — no action can be sent to ${agent.hostname} right now.`
+          : `The server published no response actions for ${agent.hostname}.`}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-col gap-8" style={{ padding: '14px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg)' }}>
+      <div className="flex gap-8 items-center flex-wrap">
+        <span className="text-base" style={{ fontWeight: 600 }}>Respond on {agent.hostname}</span>
+        <span className="text-sm text-secondary">{agent.platform} · {agent.status}</span>
+      </div>
+
+      <div>
+        <label className="label">Action</label>
+        <select className="select select-sm" value={name}
+          onChange={e => { setName(e.target.value); setVals({}); setConfirming(false); }}>
+          <option value="">Select action…</option>
+          {Object.entries(actions).map(([n, s]) => <option key={n} value={n}>{s.label || n}</option>)}
+        </select>
+        {spec?.description && <div className="text-sm text-secondary" style={{ marginTop: 4 }}>{spec.description}</div>}
+      </div>
+
+      {spec && params.length > 0 && (
+        <div className="flex-col gap-8">
+          {params.map(([k, p]) => (
+            <div key={k}>
+              <label className="label">{p.label || k}{p.required ? ' *' : ''}</label>
+              {p.options ? (
+                <select className="select select-sm" value={vals[k] ?? ''} onChange={e => pick(k, e.target.value)}>
+                  <option value="">—</option>
+                  {p.options.map(op => <option key={op} value={op}>{op}</option>)}
+                </select>
+              ) : p.type === 'textarea' ? (
+                <textarea className="input" rows={k === 'script' ? 6 : 3} style={{ width: '100%', fontFamily: 'monospace' }}
+                  value={vals[k] ?? ''} onChange={e => pick(k, e.target.value)} />
+              ) : p.type === 'bool' ? (
+                <input type="checkbox" checked={vals[k] === true}
+                  onChange={e => pick(k, e.target.checked)} />
+              ) : (
+                <input className="input input-sm" type={p.type === 'int' ? 'number' : 'text'}
+                  value={vals[k] ?? ''} onChange={e => pick(k, e.target.value)} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isScript && (
+        <div className="text-sm" style={{ padding: 10, border: '1px solid var(--amber)', borderRadius: 6 }}>
+          <b style={{ color: 'var(--amber)' }}>&#9888; run_script executes this script as SYSTEM (Windows) / root (Linux) on {agent.hostname}.</b>
+          <div className="text-sm text-secondary" style={{ marginTop: 4 }}>
+            Only run code you have reviewed. It runs once and the temp file is deleted afterwards; stdout/stderr come back truncated.
+          </div>
+          <label className="flex gap-6 items-center" style={{ marginTop: 8 }}>
+            <input type="checkbox" checked={acked} onChange={e => pick('confirm', e.target.checked)} />
+            <span className="text-sm text-secondary">I have reviewed this script — set args.confirm = true</span>
+          </label>
+        </div>
+      )}
+
+      {spec && (
+        <div className="flex gap-8 flex-wrap">
+          <div style={{ minWidth: 240, flex: 1 }}>
+            <label className="label">Comment (optional)</label>
+            <input className="input input-sm" style={{ width: '100%' }} value={comment}
+              placeholder="Why this action is being run" onChange={e => setComment(e.target.value)} />
+          </div>
+          <div style={{ minWidth: 240, flex: 1 }}>
+            <label className="label">Finding (case/queue id) — optional</label>
+            <input className="input input-sm" style={{ width: '100%' }} value={caseId}
+              placeholder="links the action to a finding" onChange={e => setCaseId(e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      {missing.length > 0 && <div className="text-sm" style={{ color: 'var(--red)' }}>Required: {missing.join(', ')}</div>}
+
+      {spec && !confirming && (
+        <div className="flex gap-8 items-center">
+          <button className="btn btn-sm btn-primary" disabled={!canSend} onClick={() => setConfirming(true)}>Send to host</button>
+          <span className="text-sm text-secondary">{isScript && !acked ? 'tick the acknowledgement above to enable' : ''}</span>
+        </div>
+      )}
+
+      {spec && confirming && (
+        <div className="flex gap-8 items-center flex-wrap">
+          <span className={`text-sm ${destructive ? 'text-red' : 'text-secondary'}`}>
+            {destructive
+              ? `Destructive: ${label} on ${agent.hostname}?`
+              : `${label} on ${agent.hostname}?`}
+          </span>
+          <button className={`btn btn-sm ${destructive ? 'btn-danger' : 'btn-primary'}`} disabled={busy} onClick={send}>
+            {busy ? 'Sending…' : destructive ? `Yes, run ${name}` : 'Confirm'}
+          </button>
+          <button className="btn btn-sm" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OurAgents() {
   const { key: rk } = useRefresh();
   const o = useApi(() => fetch('/api/agents/online').then(r => r.json()), [], rk);
   const a = useApi(() => fetch('/api/agents/all').then(r => r.json()), [], rk);
   const nh = useApi(() => fetch('/api/agents/needs-hands').then(r => r.json()), [], rk);
+  // The action catalogue and the audit trail are page-wide, so they load once here rather than
+  // per row; a row only tracks whether its inline panel is open.
+  const cat = useApi(() => fetch('/api/agent/respond/actions').then(r => r.json()), [], rk);
+  const hist = useApi(() => fetch('/api/agent/responses?limit=20').then(r => r.json()), [], rk);
   const [f, sf] = useState('all');
+  const [responding, setResponding] = useState('');
   const [selected, setSelected] = useState(new Set());
   const [updating, setUpdating] = useState(false);
   const toast = useToast();
@@ -41,6 +242,9 @@ export default function OurAgents() {
   const outdated = all.filter(x => x.needs_update);
   const needsHands = nh.data?.items || [];
   const fl = f === 'all' ? all : f === 'online' ? online : all.filter(x => x.status === 'offline');
+  const actions = cat.data || {};
+  const responses = hist.data?.responses || [];
+  const hostOf = Object.fromEntries(all.map(x => [x.id, x.hostname]));
 
   const toggleSelect = (id) => {
     setSelected(prev => {
@@ -197,11 +401,12 @@ export default function OurAgents() {
             <table>
               <thead><tr className="th-sticky">
                 <th style={{ width: 30 }}></th>
-                <th>Platform</th><th>Hostname</th><th>Version</th><th>Status</th><th>Last Seen</th><th>Update</th>
+                <th>Platform</th><th>Hostname</th><th>Version</th><th>Status</th><th>Last Seen</th><th>Update</th><th>Response</th>
               </tr></thead>
               <tbody>
                 {fl.map((x, i) => (
-                  <tr key={x.id} style={{ cursor: 'pointer', opacity: x.status === 'offline' ? 0.6 : 1 }}
+                  <Fragment key={x.id}>
+                  <tr style={{ cursor: 'pointer', opacity: x.status === 'offline' ? 0.6 : 1 }}
                     onClick={() => toggleSelect(x.id)}>
                     <td>
                       <input type="checkbox" checked={selected.has(x.id)} onChange={e => { e.stopPropagation(); toggleSelect(x.id); }} />
@@ -226,12 +431,80 @@ export default function OurAgents() {
                         </button>
                       )}
                     </td>
+                    <td>
+                      <button className="btn btn-xs"
+                        onClick={e => { e.stopPropagation(); setResponding(responding === x.id ? '' : x.id); }}>
+                        {responding === x.id ? 'Close' : 'Respond'}
+                      </button>
+                    </td>
                   </tr>
+                  {responding === x.id && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0 }}>
+                        <RespondPanel agent={x} actions={actions} catalogueError={!!cat.error}
+                          onDone={() => hist.refetch()} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+      </div>
+
+      <div className="card card-mt">
+        <div className="card-header">
+          <div className="card-title">Recent responses ({responses.length})</div>
+          <button className="btn btn-sm" onClick={() => hist.refetch()} title="Reload the response history">&#8635;</button>
+        </div>
+        {hist.loading ? (
+          <div className="loading">Loading response history…</div>
+        ) : responses.length === 0 ? (
+          <div className="empty-state">
+            No response action has been run yet. Pick <b>Respond</b> on an agent row — the result lands here,
+            attributed to that host and to the analyst who ran it.
+          </div>
+        ) : (
+          <div className="table-container" style={{ maxHeight: 360, overflow: 'auto' }}>
+            <table>
+              <thead><tr className="th-sticky">
+                <th>Time</th><th>Host</th><th>Action</th><th>Actor</th><th>Status</th><th>Finding</th><th>Result</th>
+              </tr></thead>
+              <tbody>
+                {responses.map(r => {
+                  const [cls, text] = RESPONSE_STATUS[r.status] || ['badge-gray', r.status || 'unknown'];
+                  const raw = r.result == null ? '' : (typeof r.result === 'string' ? r.result : JSON.stringify(r.result));
+                  const summary = resultSummary(r.result);
+                  return (
+                    <tr key={r.id || r.cmd_id}>
+                      <td className="text-sm text-secondary text-nowrap">{fd(r.created)}</td>
+                      <td className="text-base">{hostOf[r.agent_id] || r.agent_id}</td>
+                      <td className="text-base">{r.action}</td>
+                      <td className="text-sm text-secondary">{r.actor || '—'}</td>
+                      <td><span className={`badge ${cls} badge-xs`} title={r.status}>{text}</span></td>
+                      <td className="text-sm">
+                        {r.case_id || r.queue_id
+                          ? <span className="badge badge-accent badge-xs">{r.case_id || r.queue_id}</span>
+                          : <span className="text-secondary">—</span>}
+                      </td>
+                      <td className="text-sm" style={{ maxWidth: 320 }}>
+                        <span className="truncate-sm" style={{ display: 'inline-block', verticalAlign: 'bottom' }}
+                          title={raw}>{summary || '—'}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="text-sm text-secondary" style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+          Isolation blocks traffic in <b>both</b> directions (only the collector link keeps working), so release it as
+          soon as the host is triaged. <code>run_script</code> runs as SYSTEM / root and refuses to start without its
+          confirm flag.
+        </div>
       </div>
     </>
   );
