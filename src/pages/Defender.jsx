@@ -22,6 +22,22 @@ function connBadge(status, missing, required) {
   return <span className={`badge ${map[status] || 'badge-gray'}`} title={title}>{label}</span>;
 }
 
+const SOC_LABEL = { resolved: 'Resolved (SOC)', false_positive: 'Dismissed (SOC)', closed: 'Closed (SOC)' };
+
+function statusChip(e) {
+  if (e.actioned) {
+    const soc = String(e.soc_status || '').toLowerCase();
+    const done = soc === 'false_positive' || soc === 'dismissed';
+    return (
+      <span className={`badge ${done ? 'badge-gray' : 'badge-green'}`}
+        title={e.actioned_at ? `Recorded in the SOC at ${e.actioned_at}` : 'Recorded in the SOC'}>
+        {SOC_LABEL[soc] || 'Closed (SOC)'}
+      </span>
+    );
+  }
+  return <span className="badge badge-amber">{e.status || '-'}</span>;
+}
+
 export default function Defender() {
   const toast = useToast();
   const [tab, setTab] = useState('alerts');
@@ -246,11 +262,17 @@ export default function Defender() {
                     <div className="text-base">{e.title || '-'}</div>
                     {e.description && <div className="text-xs text-secondary">{String(e.description).slice(0, 140)}</div>}
                   </td>
-                  <td><span className="badge badge-gray">{e.status || '-'}</span></td>
+                  <td>{statusChip(e)}</td>
                   <td className="text-sm">{[e.device, e.user].filter(Boolean).join(' · ') || '-'}</td>
                   <td className="text-sm">{(e.mitre || []).join(', ') || '-'}</td>
                   <td className="text-sm">{e.endpoint ? 'Defender for Endpoint (alerts_v2)' : (e.service_source || e.source)}</td>
                   <td>
+                    {e.actioned ? (
+                      <button className="btn btn-xs" disabled={busy === `reopen:${e.id}`}
+                        onClick={() => act(e, 'reopen')}>
+                        {busy === `reopen:${e.id}` ? '...' : 'Reopen'}
+                      </button>
+                    ) : (
                     <div className="flex gap-6">
                       <button className="btn btn-xs btn-primary" disabled={busy === `resolve:${e.id}`}
                         onClick={() => { setActFor(`resolve:${e.id}`); setComment(''); }}>
@@ -261,6 +283,7 @@ export default function Defender() {
                         Dismiss
                       </button>
                     </div>
+                    )}
                     {actFor.endsWith(e.id) && (
                       <div style={{ marginTop: 6 }}>
                         <input value={comment} placeholder="What did you find? (recorded on the case)"
