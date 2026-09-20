@@ -183,7 +183,10 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
         # failure this tool exists to catch: retry with the OTHER installer rather
         # than sitting in the full cooldown showing a green "installed".
         if was_push and age_h >= retry_after_h and attempts < 3:
-            alt = "exe" if prev.get("kind", kind) == "script" else "script"
+            # An explicit --kind wins over the retry heuristic: the operator asked for a
+            # specific installer, and silently switching it installed the older exe agent.
+            alt = kind_override if kind_override != "auto" else (
+                "exe" if prev.get("kind", kind) == "script" else "script")
             why = f"previous {prev.get('kind')} push had no effect {age_h:.1f}h ago"
             action = f"installer ({alt}, retry {attempts + 1}: {why})"
             if not dry:
@@ -199,6 +202,11 @@ def converge_host(a: dict, key: str, tele: dict, pub: dict, state: dict,
             return host, ver, "cooldown", f"({age_h:.1f}h ago: {prev.get('action')})"
 
     live = f"windows-{host}" in connected
+    # A kind override means "install this build here" (e.g. switch a host off the exe back
+    # to the script agent) - the self_update shortcut would instead re-fetch the agent's
+    # own kind and do nothing.
+    if kind_override != "auto":
+        live = False
     if live and version_tuple(ver) >= CAN_SELF_UPDATE:
         # Connected and able to update itself: hand it the command, no restart needed.
         action = "queued self_update"
