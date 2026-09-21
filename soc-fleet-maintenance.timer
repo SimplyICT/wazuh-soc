@@ -4,6 +4,10 @@ Description=Run SOC fleet maintenance every 15 minutes
 [Timer]
 OnBootSec=5min
 OnUnitInactiveSec=15min
+# A fixed cadence as well: an interrupted or manually started run can leave an
+# inactive-relative timer unarmed (observed: NextElapseUSecMonotonic=infinity), and
+# then the fleet silently stops converging until a reboot.
+OnCalendar=*:0/15
 AccuracySec=1min
 Persistent=true
 Unit=soc-fleet-maintenance.service
