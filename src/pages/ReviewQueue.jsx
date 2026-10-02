@@ -48,9 +48,15 @@ function AnalystGuidance({ item }) {
   const techParam = itemTechniques(item).join(',');
   const m = useApi(
     () => (techParam
-      ? fetch(`/api/skills/match?techniques=${encodeURIComponent(techParam)}&detection_type=${encodeURIComponent(item.source || '')}&limit=3`).then(r => r.json())
+      // Pass the finding's own words as well as its techniques: keyword overlap is what
+      // separates a playbook that merely carries the technique tag from one that fits this
+      // alert (with techniques alone, a LSASS alert suggested 'deploy EDR' first).
+      ? fetch(`/api/skills/match?techniques=${encodeURIComponent(techParam)}`
+          + `&detection_type=${encodeURIComponent(item.source || '')}`
+          + `&q=${encodeURIComponent([item.title, (item.details || {}).description].filter(Boolean).join(' ').slice(0, 200))}`
+          + `&limit=3`).then(r => r.json())
       : Promise.resolve(null)),
-    [techParam, item.source]
+    [techParam, item.source, item.title]
   );
   const matches = m.data?.matches || [];
   if (m.loading || matches.length === 0) return null;
