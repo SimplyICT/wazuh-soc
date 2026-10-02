@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import KpiCard from '../components/KpiCard';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -40,6 +41,7 @@ function statusChip(e) {
 
 export default function Defender() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [tab, setTab] = useState('alerts');
   const [busy, setBusy] = useState('');
   const [actFor, setActFor] = useState('');
@@ -299,6 +301,14 @@ export default function Defender() {
                             onClick={() => act(e, 'note')}>Add note only</button>
                           <button className="btn btn-xs" onClick={() => { setActFor(''); setComment(''); }}>Cancel</button>
                         </div>
+                      </div>
+                    )}
+                    {(e.mitre || []).length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        <button className="btn btn-xs"
+                          onClick={() => navigate(`/skills?technique=${encodeURIComponent(e.mitre[0])}`)}>
+                          Playbooks
+                        </button>
                       </div>
                     )}
                   </td>

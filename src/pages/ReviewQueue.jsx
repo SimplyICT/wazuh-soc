@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import KpiCard from '../components/KpiCard';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -31,6 +32,43 @@ function safeStringify(value, maxLen) {
   } catch {
     return 'Unable to display details';
   }
+}
+
+// Techniques may live under details.mitre, details.techniques, or the item root.
+function itemTechniques(item) {
+  const details = item?.details || {};
+  const raw = details.mitre || details.techniques || item?.mitre || [];
+  if (typeof raw === 'string') return raw.split(/[,\s]+/).filter(Boolean);
+  return Array.isArray(raw) ? raw.filter(Boolean) : [];
+}
+
+// Matched library playbooks for the open item; hidden until the row is expanded.
+function AnalystGuidance({ item }) {
+  const navigate = useNavigate();
+  const techParam = itemTechniques(item).join(',');
+  const m = useApi(
+    () => (techParam
+      ? fetch(`/api/skills/match?techniques=${encodeURIComponent(techParam)}&detection_type=${encodeURIComponent(item.source || '')}&limit=3`).then(r => r.json())
+      : Promise.resolve(null)),
+    [techParam, item.source]
+  );
+  const matches = m.data?.matches || [];
+  if (m.loading || matches.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div className="text-sm text-secondary" style={{ fontWeight: 600, marginBottom: 4 }}>Analyst guidance</div>
+      <div className="flex-col gap-4">
+        {matches.map(mm => (
+          <div key={mm.name} className="card" style={{ padding: 8, margin: 0, cursor: 'pointer' }}
+            onClick={() => navigate(`/skills?name=${encodeURIComponent(mm.name)}`)}>
+            <span className="text-mono text-base" style={{ fontWeight: 600 }}>{mm.name}</span>
+            {mm.subdomain && <span className="badge badge-accent badge-xs" style={{ marginLeft: 6 }}>{mm.subdomain}</span>}
+            {mm.why && <span className="text-xs text-secondary" style={{ marginLeft: 6 }}>{mm.why}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function ReviewQueue() {
@@ -196,6 +234,7 @@ export default function ReviewQueue() {
                     <div className="text-base" style={{ marginBottom: 8 }}>
                       <strong>SLA:</strong> Respond by {item.respond_by ? new Date(item.respond_by).toLocaleString() : '-'} | Resolve by {item.resolve_by ? new Date(item.resolve_by).toLocaleString() : '-'}
                     </div>
+                    <AnalystGuidance item={item} />
                     <div className="flex gap-6" style={{ marginBottom: 8 }}>
                       <input value={noteText} onChange={e => setNoteText(e.target.value)}
                         placeholder="Add a note..."

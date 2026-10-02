@@ -28,6 +28,7 @@ const SettingsPg = lazy(() => import('./pages/Settings'));
 const FimPg = lazy(() => import('./pages/Fim'));
 const Autopilot = lazy(() => import('./pages/Autopilot'));
 const PlaybooksPg = lazy(() => import('./pages/Playbooks'));
+const Skills = lazy(() => import('./pages/Skills'));
 const AutopilotCase = lazy(() => import('./pages/AutopilotCase'));
 const Manager = lazy(() => import('./pages/Manager'));
 const Groups = lazy(() => import('./pages/Groups'));
@@ -44,6 +45,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<SuspenseWrapper><Dashboard /></SuspenseWrapper>} />
         <Route path="playbooks" element={<SuspenseWrapper><PlaybooksPg /></SuspenseWrapper>} />
+        <Route path="skills" element={<SuspenseWrapper><Skills /></SuspenseWrapper>} />
         <Route path="fim" element={<SuspenseWrapper><FimPg /></SuspenseWrapper>} />
         <Route path="agents" element={<SuspenseWrapper><OurAgents /></SuspenseWrapper>} />
         <Route path="our-agents" element={<SuspenseWrapper><OurAgents /></SuspenseWrapper>} />

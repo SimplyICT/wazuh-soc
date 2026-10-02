@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 const NAV_ITEMS = [
   { path: '/', label: 'Command Center', icon: '\u25A0' },
   { path: '/playbooks', label: 'Playbooks', icon: '\u25B6' },
+  { path: '/skills', label: 'Playbooks & Skills', icon: '\uD83D\uDCDA' },
   { path: '/agents', label: 'Agents', icon: '\uD83D\uDCE1' },
   { path: '/fim', label: 'File Integrity', icon: '\u270F' },
   { path: '/vulnerabilities', label: 'Vulnerabilities', icon: '\u26A0' },
