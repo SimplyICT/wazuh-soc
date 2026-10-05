@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
+import ThemeToggle from './ThemeToggle';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Command Center', icon: '\u25A0' },
@@ -46,6 +47,9 @@ export default function Sidebar({ collapsed, onToggle }) {
           {collapsed ? '\u2192' : '\u2190'}
         </button>
       </div>
+      <div className="sidebar-header" style={{ padding: '6px 16px', borderBottom: '1px solid var(--border)' }}>
+        <ThemeToggle />
+      </div>
       <nav className="sidebar-nav">
         {NAV_ITEMS.map(item => (
           <a
@@ -63,6 +67,12 @@ export default function Sidebar({ collapsed, onToggle }) {
       <div className="sidebar-footer">
         <a className="nav-btn-home" href="http://localhost:8095/index-platform.html" target="_blank" rel="noopener noreferrer">
           &#9664; Home
+        </a>
+        {/* Plain navigation, not fetch: /logout answers with a redirect (to /login, or to
+            Cloudflare's logout when the session is edge-authenticated), and the browser
+            follows it while clearing the cookie. */}
+        <a className="nav-btn-home" href="/logout" style={{ marginTop: 6 }} title="Sign out of the SOC">
+          &#9211; Logout
         </a>
       </div>
     </aside>
